@@ -108,6 +108,8 @@ static void attach_native_trx(THD *thd);
 static bool transaction_cache_insert(XID *xid, Transaction_ctx *transaction);
 static bool transaction_cache_insert_recovery(XID *xid);
 
+static int INTERNAL_MYSQL_SYSTEM_XID = -1;
+
 my_xid xid_t::get_my_xid() const {
   static_assert(XIDDATASIZE == MYSQL_XIDDATASIZE,
                 "Our #define needs to match the one in plugin.h.");
@@ -124,6 +126,8 @@ my_xid xid_t::get_my_xid() const {
 
 void xid_t::set(my_xid xid) {
   formatID = 1;
+  if (xid == 0) xid = INTERNAL_MYSQL_SYSTEM_XID;
+
   memcpy(data, MYSQL_XID_PREFIX, MYSQL_XID_PREFIX_LEN);
   memcpy(data + MYSQL_XID_PREFIX_LEN, &server_id, sizeof(server_id));
   memcpy(data + MYSQL_XID_OFFSET, &xid, sizeof(xid));
@@ -1602,6 +1606,31 @@ void XID_STATE::store_xid_info(Protocol *protocol,
     protocol->store_string(m_xid.data, m_xid.gtrid_length + m_xid.bqual_length,
                            &my_charset_bin);
   }
+}
+
+const char *XID_STATE ::get_xa_xid() const
+{
+  if (m_xid_str[0] == '\0')
+  {
+    my_xid xid = m_xid.get_my_xid();
+    if (xid == 0)
+      m_xid.serialize(m_xid_str);
+    else
+      snprintf(m_xid_str, sizeof(m_xid_str), "%llu", xid);
+  }
+  return m_xid_str;
+}
+
+std::string &XID_STATE::to_string(std::string &str) const
+{
+  char buf[256];
+  int retlen = snprintf(buf, sizeof(buf),
+      "xid: %s, state: %s, type: %s, %s, %s, %u",get_xa_xid(),
+           state_name(), get_xa_type_str(), in_recovery ? "in_recovery" : "",
+           m_is_binlogged ? "binlogged" : "", rm_error);
+  assert(retlen < (int)sizeof(buf));
+  str= buf;
+  return str;
 }
 
 #ifndef NDEBUG

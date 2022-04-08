@@ -405,7 +405,10 @@ class XID_STATE {
     XA_EXTERNAL,
     // xa txn branch started by 'xa start' but the
     // XA txn is recovered, not started by current session 
-    XA_EXTERNAL_RECOVERED
+    XA_EXTERNAL_RECOVERED,
+    // non-xa txns recovered, they only transiently during recovery phase,
+    // they will either be committed or aborted during binlog recovery.
+    XA_INTERNAL_RECOVERED
   };
 
   /**
@@ -478,20 +481,17 @@ class XID_STATE {
     case XID_STATE::XA_EXTERNAL_RECOVERED:
       res= "external_recvrd";
       break;
+    case XID_STATE::XA_INTERNAL_RECOVERED:
+      res= "internal_recvrd";
+      break;
     default:
       break;
     }
     return res;
   }
 
-  const char *get_xa_xid() const
-  {
-    if (m_xid_str[0] == '\0')
-    {
-      m_xid.serialize(m_xid_str);
-    }
-    return m_xid_str;
-  }
+  const char *get_xa_xid() const;
+
 
   std::mutex &get_xa_lock() { return m_xa_lock; }
 

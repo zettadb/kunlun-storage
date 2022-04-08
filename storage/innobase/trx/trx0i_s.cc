@@ -471,12 +471,27 @@ static ibool fill_trx_row(
 
   if (trx->mysql_thd == nullptr) {
     /* For internal transactions e.g., purge and transactions
-    being recovered at startup there is no associated MySQL
+	recovered at startup there is no associated MySQL
     thread data structure. */
     row->trx_mysql_thread_id = 0;
     row->trx_query = nullptr;
 	row->trx_xid[0]= '\0';
 	row->trx_xa_type= nullptr;
+    if (trx->xid && !trx->xid->is_null()) {
+      trx->xid->serialize(row->trx_xid);
+      if (trx_is_mysql_xa(trx)) {
+        row->trx_xa_type = "internal_recvrd";
+		snprintf(row->trx_xid, sizeof(row->trx_xid), "%llu", trx->xid->get_my_xid());
+      } else {
+        trx->xid->serialize(row->trx_xid);
+        row->trx_xa_type = "external_recvrd";
+	  }
+    } else {
+      if (trx->internal)
+        row->trx_xa_type = (trx->is_recovered ? "idb_internal_recvrd" : "idb_internal");
+      else
+        row->trx_xa_type = (trx->is_recovered ? "mysql_internal_recvrd" : "mysql_internal");
+    }
     goto thd_done;
   }
 
