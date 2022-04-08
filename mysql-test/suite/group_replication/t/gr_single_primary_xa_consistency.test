@@ -56,13 +56,19 @@ XA END 'trx1';
 --error 2013
 XA PREPARE 'trx1';
 
---echo # Check that no event groups can be received when mysqld crashes at the crash_after_flush_binlog point.
+--echo # Check that trx1's event group can be received & executed although server1's mysqld crashes at the crash_after_flush_binlog point.
 --let $rpl_connection_name= server2
 --source include/rpl_connection.inc
+--let $wait_binlog_event= XA PREPARE
+--echo #wait until server2 executes the 'XA PREPARE' event.
+--source include/wait_for_binlog_event.inc
 XA RECOVER;
 #show binlog events;
 --let $rpl_connection_name= server3
 --source include/rpl_connection.inc
+--let $wait_binlog_event= XA PREPARE
+--echo #wait until server2 executes the 'XA PREPARE' event.
+--source include/wait_for_binlog_event.inc
 XA RECOVER;
 #show binlog events;
 
@@ -83,16 +89,16 @@ XA RECOVER;
 # receive binlogs of server1 AFTER(not before) it restarts, i.e. it proved
 # that if server1 doesn't startup, server2/3 can't receive the XA PREPARE event group.
 
---let $rpl_connection_name= server2
---source include/rpl_connection.inc
---echo #expect trx1 prepared on server2
-XA RECOVER;
-#show binlog events;
-
---let $wait_binlog_event= XA PREPARE
---echo #wait until server2 executes the 'XA PREPARE' event.
---source include/wait_for_binlog_event.inc
-XA RECOVER;
+#--let $rpl_connection_name= server2
+#--source include/rpl_connection.inc
+#--echo #expect trx1 prepared on server2
+#XA RECOVER;
+##show binlog events;
+#
+#--let $wait_binlog_event= XA PREPARE
+#--echo #wait until server2 executes the 'XA PREPARE' event.
+#--source include/wait_for_binlog_event.inc
+#XA RECOVER;
 #show binlog events;
 
 # server1 will first become UNREACHABLE in the group, then it's kicked out of
@@ -106,6 +112,8 @@ XA RECOVER;
 #--source include/gr_wait_for_member_state.inc
 #select*from performance_schema.replication_group_members;
 
+--let $rpl_connection_name= server2
+--source include/rpl_connection.inc
 --let $group_replication_group_name= $group_name
 --let $group_replication_number_of_members= 2
 --source include/gr_wait_for_number_of_members.inc
@@ -113,14 +121,14 @@ XA RECOVER;
 
 --let $rpl_connection_name= server3
 --source include/rpl_connection.inc
---echo #expect trx1 prepared on server3
-XA RECOVER;
-#show binlog events;
-
---let $wait_binlog_event= XA PREPARE
---echo #wait until server3 executes the 'XA PREPARE' event.
---source include/wait_for_binlog_event.inc
-XA RECOVER;
+#--echo #expect trx1 prepared on server3
+#XA RECOVER;
+##show binlog events;
+#
+#--let $wait_binlog_event= XA PREPARE
+#--echo #wait until server3 executes the 'XA PREPARE' event.
+#--source include/wait_for_binlog_event.inc
+#XA RECOVER;
 #show binlog events;
 
 #--echo # wait for server1 to be UNREACHABLE on server3.
@@ -153,10 +161,16 @@ XA COMMIT 'trx1';
 --echo # Check that no event groups can be received when mysqld crashes at the crash_after_flush_binlog point
 --let $rpl_connection_name= server2
 --source include/rpl_connection.inc
+--let $wait_binlog_event= XA COMMIT
+--echo #wait until server2 executes the 'XA COMMIT' event.
+--source include/wait_for_binlog_event.inc
 XA RECOVER;
 #show binlog events;
 --let $rpl_connection_name= server3
 --source include/rpl_connection.inc
+--let $wait_binlog_event= XA COMMIT
+--echo #wait until server2 executes the 'XA COMMIT' event.
+--source include/wait_for_binlog_event.inc
 XA RECOVER;
 #show binlog events;
 
@@ -261,10 +275,16 @@ XA COMMIT 'trx2' ONE PHASE;
 --echo # Check that no event groups can be received when mysqld crashes at the crash_after_flush_binlog point
 --let $rpl_connection_name= server2
 --source include/rpl_connection.inc
+--let $wait_binlog_event= ONE PHASE
+--echo #wait until server2 executes the 'XA COMMIT ONE PHASE' event.
+--source include/wait_for_binlog_event.inc
 XA RECOVER;
 #show binlog events;
 --let $rpl_connection_name= server3
 --source include/rpl_connection.inc
+--let $wait_binlog_event= ONE PHASE
+--echo #wait until server2 executes the 'XA COMMIT ONE PHASE' event.
+--source include/wait_for_binlog_event.inc
 XA RECOVER;
 #show binlog events;
 

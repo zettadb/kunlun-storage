@@ -11048,7 +11048,7 @@ static int get_options(int *argc_ptr, char ***argv_ptr) {
 
 static void set_server_version(void) {
   char *end MY_ATTRIBUTE((unused)) = strxmov(
-      server_version, MYSQL_SERVER_VERSION, MYSQL_SERVER_SUFFIX_STR, NullS);
+      server_version, MYSQL_SERVER_VERSION, "-kunlun-storage", MYSQL_SERVER_SUFFIX_STR, NullS);
 #ifndef NDEBUG
   if (!strstr(MYSQL_SERVER_SUFFIX_STR, "-debug"))
     end = my_stpcpy(end, "-debug");

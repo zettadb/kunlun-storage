@@ -127,6 +127,8 @@ ulong kill_idle_transaction_timeout = 0;
 PSI_mutex_key key_LOCK_bloom_filter;
 
 extern int print_extra_info;
+const char *get_server_command_name(enum enum_server_command cmd);
+const char *get_sql_command_name(enum enum_sql_command cmd);
 
 /*
   The following is used to initialise Table_ident with a internal
@@ -906,7 +908,6 @@ void THD::init(void) {
   */
   m_disable_password_validation = false;
 
-  m_global_conn_id = 0;
   real_tid=0;
   real_id= 0;
 }

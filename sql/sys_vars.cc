@@ -7953,3 +7953,19 @@ static Sys_var_bool Sys_clone_binlog_phy_consistency(
        "Keep binlog physical position consistent with data in SEs.",
        GLOBAL_VAR(clone_binlog_phy_consistency),
        CMD_LINE(OPT_ARG), DEFAULT(true));
+
+uint32_t comp_node_id;
+static Sys_var_uint Sys_computing_node_id(
+    "computing_node_id",
+    "Computing node id of current connection",
+    SESSION_ONLY(comp_node_id), NO_CMD_LINE,
+    VALID_RANGE(0, UINT_MAX), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(0));
+
+uint32_t global_conn_id;
+static Sys_var_uint Sys_global_conn_id(
+    "global_conn_id",
+    "Global connection id of current connection allocated by the computing node.",
+    SESSION_ONLY(global_conn_id), NO_CMD_LINE,
+    VALID_RANGE(0, UINT_MAX), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(0));

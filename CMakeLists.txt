@@ -2097,6 +2097,7 @@ ENDIF(DOXYGEN_FOUND)
 
 INCLUDE(CPack)
 
+ADD_SUBDIRECTORY(dba_tools)
 # C/CXX compiler flags consist of:
 # CPPFLAGS        Taken from environment, see above.
 # ADD_DEFINITIONS In each individual CMakeLists.txt

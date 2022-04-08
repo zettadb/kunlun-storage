@@ -2680,7 +2680,7 @@ class thread_info {
  public:
   thread_info()
       : thread_id(0), pthread_id(0), thread_tid(0), global_conn_id(0),
-        start_time_in_secs(0),
+        comp_node_id(0), start_time_in_secs(0),
         start_time_in_usecs(0),
         command(0),
         user(nullptr),
@@ -2693,6 +2693,7 @@ class thread_info {
   ulonglong pthread_id;
   int thread_tid;  
   uint32 global_conn_id;
+  uint32 comp_node_id;
   time_t start_time_in_secs;
   ulonglong start_time_in_usecs;
   uint command;
@@ -2780,7 +2781,8 @@ class List_process_list : public Do_THD_Impl {
     thd_info->thread_id = inspect_thd->thread_id();
     thd_info->pthread_id= (print_extra_info > 0 ? inspect_thd->real_thread_id() : 0);
     thd_info->thread_tid= (print_extra_info > 0 ? inspect_thd->real_thread_tid() : 0);
-    thd_info->global_conn_id= inspect_thd->get_global_connection_id();
+    thd_info->global_conn_id= inspect_thd->variables.global_conn_id;
+    thd_info->comp_node_id = inspect_thd->variables.comp_node_id;
 
     /* USER */
     if (inspect_sctx_user.str)
@@ -2924,6 +2926,9 @@ void mysqld_list_processes(THD *thd, const char *user, bool verbose) {
   field_list.push_back(field= new Item_return_int("global_conn_id",
                                                   MY_INT32_NUM_DECIMAL_DIGITS,
                                                   MYSQL_TYPE_LONG));
+  field_list.push_back(field= new Item_return_int("comp_node_id",
+                                                  MY_INT32_NUM_DECIMAL_DIGITS,
+                                                  MYSQL_TYPE_LONG));
 
   if (thd->send_result_metadata(field_list,
                                 Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -2977,6 +2982,7 @@ void mysqld_list_processes(THD *thd, const char *user, bool verbose) {
     protocol->store(thd_info->pthread_id);
     protocol->store(thd_info->thread_tid);
     protocol->store(thd_info->global_conn_id);
+    protocol->store(thd_info->comp_node_id);
 
     if (protocol->end_row()) break; /* purecov: inspected */
   }
@@ -3109,7 +3115,8 @@ class Fill_process_list : public Do_THD_Impl {
     table->field[10]->store((ulonglong)inspect_thd->get_examined_row_count());
     table->field[11]->store(print_extra_info > 0 ? (ulonglong) inspect_thd->real_thread_id() : 0);
     table->field[12]->store(print_extra_info > 0 ? (ulonglong) inspect_thd->real_thread_tid() : 0);
-    table->field[13]->store((ulonglong) inspect_thd->get_global_connection_id());
+    table->field[13]->store(inspect_thd->variables.global_conn_id);
+    table->field[14]->store(inspect_thd->variables.comp_node_id);
 
     mysql_mutex_unlock(&inspect_thd->LOCK_thd_data);
 
@@ -5599,6 +5606,8 @@ ST_FIELD_INFO processlist_fields_info[] = {
      MY_I_S_UNSIGNED, "Thread_tid", 0},
     {"GLOBAL_CONN_ID", MY_INT32_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONG, 0,
      MY_I_S_UNSIGNED, "Global_conn_id", 0},
+    {"COMP_NODE_ID", MY_INT32_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONG, 0,
+     MY_I_S_UNSIGNED, "Comp_node_id", 0},
     {nullptr, 0, MYSQL_TYPE_STRING, 0, 0, nullptr, 0}};
 
 ST_FIELD_INFO plugin_fields_info[] = {

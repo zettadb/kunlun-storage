@@ -243,7 +243,7 @@ bool Clone_persist_gtid::check_gtid_prepare(THD *thd, trx_t *trx,
    * will ever be called to set the gtid to trx's innodb update undo log.
    *
    * If a txn only modifies temp tables, it's not gonna be written to binlog
-   * in SBR.
+   * in non-SBR mode.
    * */
   bool is_sbr = false;
   if (!found_gtid && (!thd_gtid_generatable(thd, is_sbr) ||

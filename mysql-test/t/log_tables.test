@@ -520,7 +520,9 @@ CREATE TABLE `db_17876.slow_log_data` (
   `insert_id` int(11) default NULL,
   `server_id` int(11) default NULL,
   `sql_text` mediumblob,
-  `thread_id` bigint(21) unsigned not NULL
+  `thread_id` bigint(21) unsigned not NULL,
+  `global_conn_id` int(10) unsigned not NULL,
+  `comp_node_id` int(10) unsigned not NULL
 );
 
 CREATE TABLE `db_17876.general_log_data` (
@@ -540,6 +542,8 @@ BEGIN
   DECLARE user_host MEDIUMTEXT;
   DECLARE rows_set, rows_examined, last_insert_id, insert_id, server_id INT;
   DECLARE thread_id BIGINT UNSIGNED;
+  DECLARE global_conn_id INT UNSIGNED;
+  DECLARE comp_node_id INT UNSIGNED;
   DECLARE dbname MEDIUMTEXT;
   DECLARE sql_text BLOB;
   DECLARE done INT DEFAULT 0;
@@ -557,7 +561,7 @@ BEGIN
         FETCH cur1 INTO
            start_time, user_host, query_time, lock_time,
            rows_set, rows_examined, dbname, last_insert_id,
-           insert_id, server_id, sql_text, thread_id;
+           insert_id, server_id, sql_text, thread_id, global_conn_id, comp_node_id;
       END;
 
       IF NOT done THEN
@@ -565,7 +569,7 @@ BEGIN
           INSERT INTO
             `db_17876.slow_log_data`
             VALUES(start_time, user_host, query_time, lock_time, rows_set, rows_examined,
-                   dbname, last_insert_id,  insert_id, server_id, sql_text, thread_id);
+                   dbname, last_insert_id,  insert_id, server_id, sql_text, thread_id, global_conn_id, comp_node_id);
         END;
       END IF;
     END;
