@@ -1533,14 +1533,21 @@ bool Query_logger::general_log_write(THD *thd, enum_server_command command,
     Is general log enabled?
     Any active handlers?
   */
-  if (!log_command(thd, command) || !opt_general_log ||
-      !(*general_log_handler_list))
+  const bool genlog_disabled = (!opt_general_log || !log_command(thd, command));
+  const bool is_kill_cmd = (thd->lex && thd->lex->sql_command == SQLCOM_KILL);
+
+  if ((genlog_disabled && !is_kill_cmd) || !(*general_log_handler_list))
     return false;
 
   char user_host_buff[MAX_USER_HOST_SIZE + 1];
   size_t user_host_len =
       make_user_name(thd->security_context(), user_host_buff);
   ulonglong current_utime = my_micro_time();
+
+  // In this case we must temporarily activate logging.
+  bool tmp_activate= (genlog_disabled && is_kill_cmd);
+  if (tmp_activate && query_logger.activate_log_handler(thd, QUERY_LOG_GENERAL))
+    tmp_activate= false;
 
   mysql_rwlock_rdlock(&LOCK_logger);
 
@@ -1555,6 +1562,8 @@ bool Query_logger::general_log_write(THD *thd, enum_server_command command,
   }
   mysql_rwlock_unlock(&LOCK_logger);
 
+  if (tmp_activate)
+    deactivate_log_handler(QUERY_LOG_GENERAL); 
   return error;
 }
 
