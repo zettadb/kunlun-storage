@@ -1487,6 +1487,7 @@ class THD : public MDL_context_owner,
   */
   const char *proc_info(const System_variables &sysvars) const;
 
+  uint32 m_global_conn_id; // dzw: global connection id given by computing node.
  public:
   // See comment in THD::enter_cond about why SUPPRESS_TSAN is needed.
   void enter_stage(const PSI_stage_info *stage, PSI_stage_info *old_stage,
@@ -1569,6 +1570,15 @@ class THD : public MDL_context_owner,
  public:
   void set_admin_connection(bool admin) { m_is_admin_conn = admin; }
   bool is_admin_connection() const { return m_is_admin_conn; }
+  void set_global_connection_id(uint32 gcid)
+  {
+    m_global_conn_id = gcid;
+  }
+ 
+  uint32 get_global_connection_id() const
+  {
+    return m_global_conn_id;
+  }
 
   uint32 unmasked_server_id;
   uint32 server_id;

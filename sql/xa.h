@@ -376,6 +376,16 @@ class XID_STATE {
     XA_ROLLBACK_ONLY
   };
 
+  enum xa_types {
+    // internal mysql XA txn branch, not an xa txn branch started by 'XA START'
+    XA_INTERNAL,
+    // xa txn branch started by 'xa start'
+    XA_EXTERNAL,
+    // xa txn branch started by 'xa start' but the
+    // XA txn is recovered, not started by current session 
+    XA_EXTERNAL_RECOVERED
+  };
+
   /**
      Transaction identifier.
      For now, this is only used to catch duplicated external xids.
@@ -406,14 +416,58 @@ class XID_STATE {
     Checked and reset at XA-commit/rollback.
   */
   bool m_is_binlogged;
+  
+  xa_types xa_type;
+
+  mutable char m_xid_str[XID::ser_buf_size + 16];// large enough
 
  public:
   XID_STATE()
       : xa_state(XA_NOTR),
         in_recovery(false),
         rm_error(0),
-        m_is_binlogged(false) {
+        m_is_binlogged(false),
+        xa_type(XA_INTERNAL) {
     m_xid.null();
+    m_xid_str[0] = '\0';
+  }
+
+  void set_xa_type(xa_types t)
+  {
+    xa_type= t;
+  }
+
+  xa_types get_xa_type() const
+  { return xa_type; }
+
+  // all strings must be shorter than 16 bytes.
+  const char *get_xa_type_str() const
+  {
+    const char *res= NULL;
+    switch(xa_type)
+    {
+    case XID_STATE::XA_INTERNAL:
+      res= "internal";
+      break;
+    case XID_STATE::XA_EXTERNAL:
+      res= "external";
+      break;
+    case XID_STATE::XA_EXTERNAL_RECOVERED:
+      res= "external_recvrd";
+      break;
+    default:
+      break;
+    }
+    return res;
+  }
+
+  const char *get_xa_xid() const
+  {
+    if (m_xid_str[0] == '\0')
+    {
+      m_xid.serialize(m_xid_str);
+    }
+    return m_xid_str;
   }
 
   std::mutex &get_xa_lock() { return m_xa_lock; }
@@ -455,6 +509,7 @@ class XID_STATE {
     m_xid.null();
     in_recovery = false;
     m_is_binlogged = false;
+    m_xid_str[0] = '\0';
   }
 
   void start_normal_xa(const XID *xid) {
@@ -463,6 +518,7 @@ class XID_STATE {
     m_xid.set(xid);
     in_recovery = false;
     rm_error = 0;
+    m_xid_str[0] = '\0';
   }
 
   void start_recovery_xa(const XID *xid, bool binlogged_arg = false) {
@@ -471,6 +527,8 @@ class XID_STATE {
     in_recovery = true;
     rm_error = 0;
     m_is_binlogged = binlogged_arg;
+    m_xid_str[0] = '\0';
+    xa_type= XA_EXTERNAL_RECOVERED;
   }
 
   bool is_in_recovery() const { return in_recovery; }

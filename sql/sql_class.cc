@@ -973,6 +973,7 @@ void THD::cleanup_connection(void) {
   }
   /* DEBUG code only (end) */
 #endif
+  m_global_conn_id = 0;
 }
 
 /*
@@ -1380,6 +1381,34 @@ extern "C" void thd_kill(ulong id) {
 extern "C" int thd_get_ft_query_extra_word_chars(void) {
   const THD *thd = current_thd;
   return thd ? thd->variables.ft_query_extra_word_chars : 0;
+}
+
+extern "C"
+char *thd_xid_serialize(const MYSQL_THD thd, char *xidstr, uint xidbuflen)
+{
+  if (!thd || xidbuflen < XID::ser_buf_size || !thd->get_transaction() ||
+      !thd->get_transaction()->xid_state() ||
+      !thd->get_transaction()->xid_state()->get_xid())
+    return NULL;
+  return thd->get_transaction()->xid_state()->get_xid()->serialize(xidstr);
+}
+
+extern "C"
+const char *thd_trx_xa_type(const MYSQL_THD thd)
+{
+  if (!thd || !thd->get_transaction() ||
+      !thd->get_transaction()->xid_state())
+    return NULL;
+  return thd->get_transaction()->xid_state()->get_xa_type_str();
+}
+
+extern "C"
+const char *thd_trx_xa_xid(const MYSQL_THD thd)
+{
+  if (!thd || !thd->get_transaction() ||
+      !thd->get_transaction()->xid_state())
+    return NULL;
+  return thd->get_transaction()->xid_state()->get_xa_xid();
 }
 
 /**

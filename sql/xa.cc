@@ -1115,6 +1115,7 @@ bool Sql_cmd_xa_start::trans_xa_start(THD *thd) {
     MYSQL_SET_TRANSACTION_XID(thd->m_transaction_psi,
                               (const void *)xid_state->get_xid(),
                               (int)xid_state->get_state());
+    xid_state->set_xa_type(XID_STATE::XA_EXTERNAL); // started by 'xa start'.
     if (transaction_cache_insert(m_xid, thd->get_transaction())) {
       xid_state->reset();
       trans_rollback(thd);

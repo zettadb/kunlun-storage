@@ -873,6 +873,24 @@ static ST_FIELD_INFO i_s_cmp_fields_info[] = {
                 " in Seconds"),
      STRUCT_FLD(open_method, 0)},
 
+#define IDX_TRX_XID    24
+   {STRUCT_FLD(field_name,     "trx_xid"),
+    STRUCT_FLD(field_length,   300),
+    STRUCT_FLD(field_type,     MYSQL_TYPE_STRING),
+    STRUCT_FLD(value,      0),
+    STRUCT_FLD(field_flags,    MY_I_S_MAYBE_NULL),
+    STRUCT_FLD(old_name,       ""),
+    STRUCT_FLD(open_method,    0)},
+
+#define IDX_TRX_TYPE   25
+   {STRUCT_FLD(field_name,     "trx_xa_type"),
+    STRUCT_FLD(field_length,   16),
+    STRUCT_FLD(field_type,     MYSQL_TYPE_STRING),
+    STRUCT_FLD(value,      0),
+    STRUCT_FLD(field_flags,    MY_I_S_MAYBE_NULL),
+    STRUCT_FLD(old_name,       ""),
+    STRUCT_FLD(open_method,    0)},
+
     END_OF_ST_FIELD_INFO};
 
 /** Fill the dynamic table information_schema.innodb_cmp or
@@ -2165,6 +2183,14 @@ static int i_s_stopword_fill(THD *thd,           /*!< in: thread */
   fts_default_stopword */
   while (fts_default_stopword[i]) {
     OK(field_store_string(fields[STOPWORD_VALUE], fts_default_stopword[i]));
+
+    // store trx xid and type.
+    const char *trx_xid = row->trx_xid;
+    if (trx_xid[0] == '\0')
+      trx_xid = NULL;
+    const char *trx_xa_type = row->trx_xa_type;
+    OK(field_store_string(fields[IDX_TRX_XID], trx_xid));
+    OK(field_store_string(fields[IDX_TRX_TYPE], trx_xa_type));
 
     OK(schema_table_store_record(thd, table));
     i++;

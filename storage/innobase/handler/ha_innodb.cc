@@ -4963,7 +4963,7 @@ static void innodb_buffer_pool_size_init() {
                  static_cast<ulong>(srv_buf_pool_size / (128 * 1024 * 1024)));
 #else  /* defined(_WIN32) && !defined(_WIN64) */
       /* Default to 8 instances when size > 1GB. */
-      srv_buf_pool_instances = 8;
+      srv_buf_pool_instances = 64;
 #endif /* defined(_WIN32) && !defined(_WIN64) */
     }
   } else {
@@ -4987,6 +4987,7 @@ static void innodb_buffer_pool_size_init() {
           << BUF_POOL_SIZE_THRESHOLD / (1024 * 1024) << " MiB";
     }
 
+    // dzw: for debug usage, one instance is easy to study.
     srv_buf_pool_instances = 1;
   }
 

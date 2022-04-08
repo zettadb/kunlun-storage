@@ -82,6 +82,10 @@ static_assert(sizeof(pk_pos_data_lock_wait::m_blocking_engine_lock_id) >
 /** Initial number of rows in the table cache */
 #define TABLE_CACHE_INITIAL_ROWSNUM 1024
 
+extern "C" char *thd_xid_serialize(const MYSQL_THD thd, char *xidstr, unsigned int xidbuflen);
+extern "C" const char *thd_trx_xa_type(const MYSQL_THD thd);
+extern "C" const char *thd_trx_xa_xid(const MYSQL_THD thd);
+
 /** @brief The maximum number of chunks to allocate for a table cache.
 
 The rows of a table cache are stored in a set of chunks. When a new
@@ -471,6 +475,8 @@ static ibool fill_trx_row(
     thread data structure. */
     row->trx_mysql_thread_id = 0;
     row->trx_query = nullptr;
+	row->trx_xid[0]= '\0';
+	row->trx_xa_type= nullptr;
     goto thd_done;
   }
 
@@ -491,6 +497,16 @@ static ibool fill_trx_row(
   } else {
     row->trx_query = nullptr;
   }
+
+  // Cache xid
+  row->trx_xid[0]= '\0';
+  {
+    const char *trx_xid= thd_trx_xa_xid(trx->mysql_thd);
+    if (trx_xid)
+      memcpy(row->trx_xid, trx_xid, XID::ser_buf_size + 16);
+  }
+
+  row->trx_xa_type = thd_trx_xa_type(trx->mysql_thd);
 
 thd_done:
   s = trx->op_info;

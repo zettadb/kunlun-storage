@@ -2497,6 +2497,21 @@ func_start:
   /* 2. Allocate a new page to the index */
   new_block = btr_page_alloc(cursor->index, hint_page_no, direction,
                              btr_page_get_level(page, mtr), mtr, mtr);
+  ulint       n_reserved  = 0;
+
+  if (!new_block)
+  {
+    bool success = fsp_reserve_free_extents(&n_reserved, cursor->index->space, 4, FSP_NORMAL, mtr);
+    if (!success) {
+      fprintf(stderr, "btr_page_split_and_insert.btr_page_alloc failed to allocate page and fsp_reserve_free_extents can't reserve free extent, will coredump\n");
+    } else {
+      new_block = btr_page_alloc(cursor->index, hint_page_no, direction,
+          btr_page_get_level(page, mtr), mtr, mtr);
+      if (!new_block) {
+        fprintf(stderr,"btr_page_split_and_insert.btr_page_alloc failed to allocate page after fsp_reserve_free_extents has reserved %lu pages, will coredump\n", n_reserved);
+      }
+    }
+  }
 
   /* New page could not be allocated */
   if (!new_block) {
@@ -2751,6 +2766,9 @@ func_exit:
   ut_ad(page_validate(buf_block_get_frame(right_block), cursor->index));
 
   ut_ad(!rec || rec_offs_validate(rec, cursor->index, *offsets));
+  if (n_reserved > 0) {
+    fil_space_release_free_extents(cursor->index->space, n_reserved);
+  }
   return (rec);
 }
 
