@@ -35,12 +35,15 @@
 #include "mysql/thread_type.h"
 #include "mysqld_error.h"
 #include "sql/mysqld.h"  // connection_events_loop_aborted
+#include "sql/log.h" // sql_print_error
 #include "sql/rpl_gtid.h"
 #include "sql/rpl_rli.h"    // Relay_log_info
 #include "sql/sql_class.h"  // THD
 #include "sql/sql_lex.h"
 #include "sql/sql_parse.h"  // stmt_causes_implicit_commit
 #include "sql/system_variables.h"
+
+extern int print_extra_info;
 
 bool set_gtid_next(THD *thd, const Gtid_specification &spec) {
   DBUG_TRACE;

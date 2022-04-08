@@ -269,6 +269,7 @@ Slave_worker::Slave_worker(Relay_log_info *rli,
   assert(internal_id == id + 1);
   checkpoint_relay_log_name[0] = 0;
   checkpoint_master_log_name[0] = 0;
+  m_identity= WORKER;
 
   mysql_mutex_init(key_mutex_slave_parallel_worker, &jobs_lock,
                    MY_MUTEX_INIT_FAST);
@@ -1144,7 +1145,14 @@ void Slave_worker::slave_worker_ends_group(Log_event *ev, int error) {
     /*
       DDL that has not yet updated the slave info repository does it now.
     */
-    if (ev->get_type_code() != binary_log::XID_EVENT &&
+    const bool is_xa_eg_end =// xa event group ending event
+        (ev->get_type_code() == binary_log::XA_PREPARE_LOG_EVENT ||
+         (ev->get_type_code() == binary_log::QUERY_EVENT &&
+          (((Query_log_event *)ev)->is_query_prefix_match(STRING_WITH_LEN("XA COMMIT")) ||
+           ((Query_log_event *)ev)->is_query_prefix_match(STRING_WITH_LEN("XA ROLLBACK")))
+          ));
+
+    if (ev->get_type_code() != binary_log::XID_EVENT && !is_xa_eg_end &&
         ev->get_type_code() != binary_log::TRANSACTION_PAYLOAD_EVENT &&
         !is_committed_ddl(ev)) {
       commit_positions(ev, ptr_g, true);

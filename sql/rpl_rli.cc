@@ -183,7 +183,7 @@ Relay_log_info::Relay_log_info(bool is_slave_recovery,
       current_mts_submode(nullptr),
       reported_unsafe_warning(false),
       rli_description_event(nullptr),
-      commit_order_mngr(nullptr),
+      m_identity(COORDINATOR), commit_order_mngr(nullptr),
       sql_delay(0),
       sql_delay_end(0),
       m_flags(0),
@@ -214,6 +214,7 @@ Relay_log_info::Relay_log_info(bool is_slave_recovery,
   set_timespec_nsec(&last_clock, 0);
   cached_charset_invalidate();
   inited_hash_workers = false;
+  gaq= NULL; // it's initialized only for Coordinator in slave_start_workers, and workers alway has it NULL.
   commit_timestamps_status = COMMIT_TS_UNKNOWN;
 
   if (!rli_fake) {

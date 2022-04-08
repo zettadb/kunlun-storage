@@ -6243,8 +6243,9 @@ int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
   ulong gaq_idx = mts_group_idx;
   Slave_job_group *ptr_group = coordinator_gaq->get_job_group(gaq_idx);
 
-  if (!thd->get_transaction()->xid_state()->check_in_xa(false) &&
-      w->is_transactional()) {
+  const bool is_in_xa = thd->get_transaction()->xid_state()->check_in_xa(false);
+  //const bool is_xa_cop = (is_in_xa ? ((XA_prepare_log_event *)this)->is_one_phase() : false);
+  if ((!is_in_xa /*|| is_xa_cop*/) && w->is_transactional()) {
     /*
       Regular (not XA) transaction updates the transactional info table
       along with the main transaction. Otherwise, the local flag turned
@@ -6272,8 +6273,13 @@ int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
   error = do_commit(thd);
   if (error) {
     if (!skipped_commit_pos) w->rollback_positions(ptr_group);
-  } else if (skipped_commit_pos)
+  } else if (skipped_commit_pos && !is_in_xa) {
+    DBUG_EXECUTE_IF(
+        "crash_after_event_group_commit_before_commit_positions",
+        sql_print_information("Crashing crash_after_event_group_commit_before_commit_positions.");
+        DBUG_SUICIDE(););
     error = w->commit_positions(this, ptr_group, w->is_transactional());
+  }
 err:
   return error;
 }
@@ -6350,7 +6356,10 @@ int Xid_apply_log_event::do_apply_event(Relay_log_info const *rli) {
     changes are made permanent during commit.
     XA transactional does not actually commit so has to defer its flush_info().
    */
-  if (!thd->get_transaction()->xid_state()->check_in_xa(false) &&
+  const bool is_in_xa = thd->get_transaction()->xid_state()->check_in_xa(false);
+  //const bool is_xa_cop = (is_in_xa ? ((XA_prepare_log_event *)this)->is_one_phase() : false);
+
+  if ((!is_in_xa /*|| is_xa_cop*/) &&
       rli_ptr->is_transactional() && !already_logged_transaction) {
     if ((error = rli_ptr->flush_info(true))) goto err;
   }
@@ -6433,11 +6442,19 @@ int Xid_apply_log_event::do_apply_event(Relay_log_info const *rli) {
 
     /*
       For transactional repository the positions are flushed ahead of commit.
-      Where as for non transactional rli repository the positions are flushed
-      only on succesful commit.
+      Where as for non transactional rli repository and for an XA PREPARE(either XA-COP or not) event,
+      the positions are flushed only on succesful commit/prepare. So it's possible
+      that the positions are not stored to rpl_relaylog_info table and such an XA txn
+      can be skipped in gtid_pre_statement_checks() function and not reexecuted.
      */
-    if (!rli_ptr->is_transactional() && !already_logged_transaction)
+    if ((!rli_ptr->is_transactional() || (is_in_xa /*&& !is_xa_cop*/)) &&
+        !already_logged_transaction) {
+      DBUG_EXECUTE_IF(
+          "crash_after_event_group_commit_before_commit_positions",
+          sql_print_information("Crashing crash_after_event_group_commit_before_commit_positions.");
+          DBUG_SUICIDE(););
       rli_ptr->flush_info(false);
+    }
   }
 err:
   // This is Bug#24588741 fix:
@@ -13272,6 +13289,18 @@ int Gtid_log_event::do_apply_event(Relay_log_info const *rli) {
    */
   thd->variables.original_server_version = original_server_version;
   thd->variables.immediate_server_version = immediate_server_version;
+  /*
+    If a slave has executed an event group and sql thread starts from an
+    earlier position to replay, the executed txns won't be executed again.
+  */
+  if (print_extra_info && state == GTID_STATEMENT_SKIP) {
+    char buf[Gtid::MAX_TEXT_LENGTH + 1];
+    global_sid_lock->rdlock();
+    thd->variables.gtid_next.to_string(global_sid_map, buf);
+    global_sid_lock->unlock();
+    sql_print_warning("Skipping already logged(executed) transaction with gtid %s", buf);
+  }
+
   const_cast<Relay_log_info *>(rli)->started_processing(
       thd->variables.gtid_next.gtid, original_commit_timestamp,
       immediate_commit_timestamp, state == GTID_STATEMENT_SKIP);

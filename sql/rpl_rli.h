@@ -255,6 +255,11 @@ class Relay_log_info : public Rpl_info {
     PRIV_CHECKS_USER_NOT_NULL
   };
 
+  enum enum_identity {
+    COORDINATOR,
+    WORKER
+  };
+
   /*
     The per-channel filter associated with this RLI
   */
@@ -1744,6 +1749,11 @@ class Relay_log_info : public Rpl_info {
 
   bool set_info_search_keys(Rpl_info_handler *to) override;
 
+  enum_identity get_identity() const
+  {
+    return m_identity;
+  }
+
   /**
     Get coordinator's RLI. Especially used get the rli from
     a slave thread, like this: thd->rli_slave->get_c_rli();
@@ -1762,7 +1772,7 @@ class Relay_log_info : public Rpl_info {
 
  protected:
   Format_description_log_event *rli_description_event;
-
+  enum_identity m_identity;
  private:
   /*
     Commit order manager to order commits made by its workers. In context of
