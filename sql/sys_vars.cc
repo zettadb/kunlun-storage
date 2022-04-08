@@ -7831,3 +7831,12 @@ static Sys_var_enum Sys_terminology_use_previous(
 #ifndef NDEBUG
     Debug_shutdown_actions Debug_shutdown_actions::instance;
 #endif
+extern int print_extra_info;
+static Sys_var_int32 Sys_print_extra_info(
+    "print_extra_info",
+    "print extra info to help problem dignosis, including disconnection info,"
+    " newly added fields of log events, etc",
+    GLOBAL_VAR(print_extra_info),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, 100000), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0), DEPRECATED_VAR(""));

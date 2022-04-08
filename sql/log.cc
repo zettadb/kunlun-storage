@@ -173,6 +173,7 @@ enum enum_general_log_table_field {
   GLT_FIELD_SERVER_ID,
   GLT_FIELD_COMMAND_TYPE,
   GLT_FIELD_ARGUMENT,
+  GLT_FIELD_EXTRA,
   GLT_FIELD_COUNT
 };
 
@@ -194,7 +195,11 @@ static const TABLE_FIELD_TYPE general_log_table_fields[GLT_FIELD_COUNT] = {
      {STRING_WITH_LEN("utf8")}},
     {{STRING_WITH_LEN("argument")},
      {STRING_WITH_LEN("mediumblob")},
-     {nullptr, 0}}};
+     {nullptr, 0}},
+    {{STRING_WITH_LEN("extra_info") },
+     {STRING_WITH_LEN("varchar(255)") },
+     {STRING_WITH_LEN("latin1")}}
+};
 
 static const TABLE_FIELD_DEF general_log_table_def = {GLT_FIELD_COUNT,
                                                       general_log_table_fields};
@@ -320,12 +325,14 @@ class File_query_log {
      @param command_type_len  The length of the string above
      @param sql_text          The very text of the query being executed
      @param sql_text_len      The length of sql_text string
+     @param extra_info        ip:port|global_conn_id
 
      @return true if error, false otherwise.
   */
   bool write_general(ulonglong event_utime, my_thread_id thread_id,
                      const char *command_type, size_t command_type_len,
-                     const char *sql_text, size_t sql_text_len);
+                     const char *sql_text, size_t sql_text_len,
+                     const char *extra_info, size_t extra_len);
 
   /**
      Log a query to the traditional slow log file.
@@ -642,7 +649,10 @@ bool File_query_log::write_general(ulonglong event_utime,
                                    my_thread_id thread_id,
                                    const char *command_type,
                                    size_t command_type_len,
-                                   const char *sql_text, size_t sql_text_len) {
+                                   const char *sql_text,
+                                   size_t sql_text_len,
+                                   const char *extra_info,
+                                   size_t extra_len) {
   char buff[32];
   size_t length = 0;
 
@@ -673,6 +683,12 @@ bool File_query_log::write_general(ulonglong event_utime,
   /* sql_text */
   if (my_b_write(&log_file, pointer_cast<const uchar *>(sql_text),
                  sql_text_len))
+    goto err;
+
+  // write extra info
+  if (my_b_write(&log_file, pointer_cast<const uchar*>("\t"), 1))
+    goto err;
+  if (my_b_write(&log_file, pointer_cast<const uchar*>(extra_info), extra_len))
     goto err;
 
   if (my_b_write(&log_file, pointer_cast<const uchar *>("\n"), 1) ||
@@ -961,6 +977,12 @@ bool Log_to_csv_event_handler::log_general(
   uint field_index;
   struct timeval tv;
 
+  const int extra_info_len= 255;
+  char extra_info[extra_info_len];
+  uint32 global_conn_id = 0;
+  Security_context *secctx = (thd ? thd->security_context () : nullptr);
+  size_t num_written= 0;
+
   /*
     CSV uses TIME_to_timestamp() internally if table needs to be repaired
     which will set thd->time_zone_used
@@ -1029,12 +1051,25 @@ bool Log_to_csv_event_handler::log_general(
                                                   command_type_len, client_cs))
     goto err;
 
+  // generate extra field, which is a ip:port|global_conn_id string.
+  if (thd) global_conn_id = thd->get_global_connection_id();
+
+  num_written=
+    snprintf(extra_info,extra_info_len, "%*s:%u|%u",
+             (secctx ? (int)secctx->host_or_ip().length : 0),
+             (secctx ? secctx->host_or_ip().str : nullptr),
+             thd->peer_port, global_conn_id);
+  if (num_written >= extra_info_len)
+    num_written= extra_info_len-1;
+
   /*
     A positive return value in store() means truncation.
     Still logging a message in the log in this case.
   */
   if (table->field[GLT_FIELD_ARGUMENT]->store(sql_text, sql_text_len,
-                                              client_cs) < 0)
+                                              client_cs) < 0 ||
+      table->field[GLT_FIELD_EXTRA]->store(extra_info,
+                                           num_written, client_cs) < 0)
     goto err;
 
   /* mark all fields as not null */
@@ -1043,6 +1078,7 @@ bool Log_to_csv_event_handler::log_general(
   table->field[GLT_FIELD_SERVER_ID]->set_notnull();
   table->field[GLT_FIELD_COMMAND_TYPE]->set_notnull();
   table->field[GLT_FIELD_ARGUMENT]->set_notnull();
+  table->field[GLT_FIELD_EXTRA]->set_notnull();
 
   /* Set any extra columns to their default values */
   for (field_index = GLT_FIELD_COUNT; field_index < table->s->fields;
@@ -1355,9 +1391,27 @@ bool Log_to_file_event_handler::log_general(
 
   Silence_log_table_errors error_handler;
   thd->push_internal_handler(&error_handler);
+
+  /*
+   * Write extra info.
+   * */
+  const size_t extra_info_len= 255;
+  char extra_info[extra_info_len];
+  uint32 global_conn_id = 0;
+  if (thd) global_conn_id = thd->get_global_connection_id();
+  Security_context *secctx = (thd ? thd->security_context () : nullptr);
+  size_t num_written=
+    snprintf(extra_info,extra_info_len, "%*s:%u|%u",
+             (secctx ? (int)secctx->host_or_ip().length : 0),
+             (secctx ? secctx->host_or_ip().str : nullptr),
+             thd->peer_port, global_conn_id);
+  if (num_written >= extra_info_len)
+    num_written= extra_info_len-1;
+
   bool retval =
       mysql_general_log.write_general(event_utime, thread_id, command_type,
-                                      command_type_len, sql_text, sql_text_len);
+                                      command_type_len, sql_text, sql_text_len,
+                                      extra_info, num_written);
   thd->pop_internal_handler();
   return retval;
 }
