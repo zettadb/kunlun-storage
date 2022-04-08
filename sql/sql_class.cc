@@ -848,7 +848,7 @@ void THD::init(void) {
                     randominit(&slog_rand, 0x11111111, 0x77777777););
   }
 
-  server_status = SERVER_STATUS_AUTOCOMMIT;
+  server_status = ((this->variables.option_bits & OPTION_AUTOCOMMIT) ? SERVER_STATUS_AUTOCOMMIT : 0);
   if (variables.sql_mode & MODE_NO_BACKSLASH_ESCAPES)
     server_status |= SERVER_STATUS_NO_BACKSLASH_ESCAPES;
 

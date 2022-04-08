@@ -25045,6 +25045,13 @@ static MYSQL_SYSVAR_UINT(background_scrub_data_interval,
                          NULL, NULL, srv_background_scrub_data_interval, 1,
                          UINT_MAX32, 0);
 
+extern ulong srv_sleep_wait_for_free_block_ms;
+static MYSQL_SYSVAR_ULONG(sleep_wait_for_free_block, srv_sleep_wait_for_free_block_ms,
+  PLUGIN_VAR_RQCMDARG,
+  "Number of micro seconds to sleep waiting for a clean free block to be"
+  " produced by the page cleaner or LRU flush thread.",
+  nullptr, nullptr, 30000, 100, ULONG_MAX, 1);
+
 static SYS_VAR *innobase_system_variables[] = {
     MYSQL_SYSVAR(api_trx_level),
     MYSQL_SYSVAR(api_bk_commit_interval),
@@ -25301,6 +25308,7 @@ static SYS_VAR *innobase_system_variables[] = {
     MYSQL_SYSVAR(scrub_log_speed),
     MYSQL_SYSVAR(records_in_range),
     MYSQL_SYSVAR(force_index_records_in_range),
+    MYSQL_SYSVAR(sleep_wait_for_free_block),
     nullptr};
 
 mysql_declare_plugin(innobase){

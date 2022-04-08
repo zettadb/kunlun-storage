@@ -6271,13 +6271,13 @@ int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
       DBUG_SUICIDE(););
 
   error = do_commit(thd);
+  DBUG_EXECUTE_IF(
+      "crash_after_event_group_commit_before_commit_positions",
+      sql_print_information("Crashing crash_after_event_group_commit_before_commit_positions.");
+      DBUG_SUICIDE(););
   if (error) {
     if (!skipped_commit_pos) w->rollback_positions(ptr_group);
   } else if (skipped_commit_pos && !is_in_xa) {
-    DBUG_EXECUTE_IF(
-        "crash_after_event_group_commit_before_commit_positions",
-        sql_print_information("Crashing crash_after_event_group_commit_before_commit_positions.");
-        DBUG_SUICIDE(););
     error = w->commit_positions(this, ptr_group, w->is_transactional());
   }
 err:
@@ -6447,12 +6447,13 @@ int Xid_apply_log_event::do_apply_event(Relay_log_info const *rli) {
       that the positions are not stored to rpl_relaylog_info table and such an XA txn
       can be skipped in gtid_pre_statement_checks() function and not reexecuted.
      */
-    if ((!rli_ptr->is_transactional() || (is_in_xa /*&& !is_xa_cop*/)) &&
+    DBUG_EXECUTE_IF(
+        "crash_after_event_group_commit_before_commit_positions",
+        sql_print_information("Crashing crash_after_event_group_commit_before_commit_positions.");
+        DBUG_SUICIDE(););
+
+    if (!rli_ptr->is_transactional() && !is_in_xa &&
         !already_logged_transaction) {
-      DBUG_EXECUTE_IF(
-          "crash_after_event_group_commit_before_commit_positions",
-          sql_print_information("Crashing crash_after_event_group_commit_before_commit_positions.");
-          DBUG_SUICIDE(););
       rli_ptr->flush_info(false);
     }
   }

@@ -1275,6 +1275,8 @@ static constexpr auto FREE_LIST_BACKOFF_HIGH_PRIO_DIVIDER = 100;
 /** The sleep reduction factor for low-priority waiter backoff sleeps */
 static constexpr auto FREE_LIST_BACKOFF_LOW_PRIO_DIVIDER = 1;
 
+ulint srv_sleep_wait_for_free_block_ms = 30;
+
 /** Returns a free block from the buf_pool. The block is taken off the
 free list. If free list is empty, blocks are moved from the end of the
 LRU list to the free list.
@@ -1455,7 +1457,8 @@ loop:
 
   if (n_iterations > 1) {
     MONITOR_INC(MONITOR_LRU_GET_FREE_WAITS);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(
+	  std::chrono::milliseconds(srv_sleep_wait_for_free_block_ms));
   }
 
   /* No free block was found: try to flush the LRU list.

@@ -6449,8 +6449,17 @@ bool mts_recovery_groups(Relay_log_info *rli) {
               }
             }
             not_reached_commit = false;
-          } else
+          } else {
             assert(ret < 0);
+            if (ret > 0)
+            {
+              delete ev;
+              ev= nullptr;
+              sql_print_error("mts_recovery_group: ev_coord(%s, %u) > w_last(%s, %u) for worker %lu",
+                  ev_coord.file_name, ev_coord.pos, w_last.file_name, w_last.pos, w->id);
+              goto err;            
+            }
+          }
         }
         delete ev;
         ev = nullptr;

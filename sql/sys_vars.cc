@@ -1198,8 +1198,27 @@ static bool check_session_admin_outside_trx_outside_sf_outside_sp(
   return false;
 }
 
+int ddc_mode = 1;
 static bool binlog_format_check(sys_var *self, THD *thd, set_var *var) {
   if (check_session_admin(self, thd, var)) return true;
+
+  /*
+    When isolation_level is read-committed and binlog_format is
+    statement, any insert/delete/update stmtms are rejected silently.
+    So forbid such combination for current session as well as globally.
+  */
+  if (ddc_mode && var->save_result.ulonglong_value == BINLOG_FORMAT_STMT &&
+      ((var->type == OPT_SESSION && thd->variables.transaction_isolation == ISO_READ_COMMITTED) ||
+       (var->type == OPT_GLOBAL && global_system_variables.transaction_isolation == ISO_READ_COMMITTED)))
+  {
+    my_error(ER_WRONG_VALUE_FOR_VAR, MYF(0), "binlog_format", "statement");
+    const char *wide= (var->type == OPT_GLOBAL ? "global" : "session");
+    push_warning_printf(thd, Sql_condition::SL_WARNING, ER_WRONG_VALUE_FOR_VAR,
+                        "Can not set %s binlog_format = statement when %s transaction_isolation = read-committed.",
+                        wide, wide);
+
+    return true;
+  }
 
   if (var->type == OPT_GLOBAL || var->type == OPT_PERSIST) {
     /*
@@ -5203,6 +5222,24 @@ static bool check_transaction_read_only(sys_var *, THD *thd, set_var *var) {
     my_error(ER_CANT_CHANGE_TX_CHARACTERISTICS, MYF(0));
     return true;
   }
+
+  /*
+    When isolation_level is read-committed and binlog_format is
+    statement, any insert/delete/update stmtms are rejected silently.
+    So forbid such combination for current session as well as globally.
+  */
+  if (ddc_mode && var->save_result.ulonglong_value == ISO_READ_COMMITTED &&
+      ((var->type == OPT_SESSION && thd->variables.binlog_format == BINLOG_FORMAT_STMT) ||
+       (var->type == OPT_GLOBAL && global_system_variables.binlog_format == BINLOG_FORMAT_STMT)))
+  {
+    my_error(ER_WRONG_VALUE_FOR_VAR, MYF(0), "transaction_isolation", "READ-COMMITTED");
+    const char *wide= (var->type == OPT_GLOBAL ? "global" : "session");
+    push_warning_printf(thd, Sql_condition::SL_WARNING, ER_WRONG_VALUE_FOR_VAR,
+                        "Can not set %s transaction_isolation = READ-COMMITTED when %s binlog_format = statement.",
+                        wide, wide);
+    return true;
+  }
+
   return false;
 }
 
@@ -7839,4 +7876,13 @@ static Sys_var_int32 Sys_print_extra_info(
     GLOBAL_VAR(print_extra_info),
     CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(0, 100000), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0), DEPRECATED_VAR(""));
+
+extern int ddc_mode;
+static Sys_var_int32 Sys_ddc_mode(
+    "ddc_mode",
+    "ddc mode",
+    GLOBAL_VAR(ddc_mode),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, 1000), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0), DEPRECATED_VAR(""));
