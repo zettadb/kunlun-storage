@@ -516,8 +516,9 @@ abort_i:
         hton->rollback_by_xid(hton, &target_xid);
         if (print_extra_info && info->do_binlog_recovery() == false)
         {
+          char buf2[XID::ser_buf_size];
           sql_print_warning("Aborting engine prepared transaction %s in normal recovery(not binlog recovery), which is only expected at 1st startup of a cloned instance.",
-              target_xid.xid_to_str(buf));
+              target_xid.serialize(buf2));
         }
       }
     }

@@ -8719,6 +8719,10 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
     */
     thd->set_trans_pos(nullptr, 0);
     if (ha_commit_low(thd, all)) return RESULT_INCONSISTENT;
+    XID_STATE *xs = thd->get_transaction()->xid_state();
+    if (xs && xs->has_state(XID_STATE::XA_PREPARED) &&
+        thd->is_one_phase_commit() && finish_commit(thd))
+      return RESULT_INCONSISTENT;
   }
 
   return RESULT_SUCCESS;
@@ -9112,6 +9116,9 @@ std::pair<bool, bool> MYSQL_BIN_LOG::sync_binlog_file(bool force) {
 int MYSQL_BIN_LOG::finish_commit(THD *thd) {
   DBUG_TRACE;
   DEBUG_SYNC(thd, "reached_finish_commit");
+  if (is_loggable_xa_prepare(thd) && thd->is_one_phase_commit())
+    return 0;
+
   /*
     In some unlikely situations, it can happen that binary
     log is closed before the thread flushes it's cache.
@@ -9579,7 +9586,8 @@ commit_stage:
       If rotate fails then depends on binlog_error_action variable
       appropriate action will be taken inside rotate call.
     */
-    int error = rotate(false, &check_purge);
+    int error = 0;
+	if (!thd->is_one_phase_commit()) error = rotate(false, &check_purge);
     mysql_mutex_unlock(&LOCK_log);
 
     if (error)
