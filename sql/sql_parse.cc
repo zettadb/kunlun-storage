@@ -203,6 +203,8 @@ class Abstract_table;
 using Mysql::Nullable;
 using std::max;
 
+extern bool disconnect_on_net_write_timeout;
+
 /**
   @defgroup Runtime_Environment Runtime Environment
   @{
@@ -1419,6 +1421,13 @@ out:
   /* The statement instrumentation must be closed in all cases. */
   assert(thd->m_digest == nullptr);
   assert(thd->m_statement_psi == nullptr);
+  /*
+    If net operations fail with error, we should close the socket connection
+    othewise client would be blocked waiting for more data but server side isn't
+    sending any more data to it.
+  */
+  if (!return_value && thd->got_net_error() && disconnect_on_net_write_timeout)
+    return_value= true;
   return return_value;
 }
 

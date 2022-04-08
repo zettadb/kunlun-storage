@@ -7897,6 +7897,14 @@ static Sys_var_long Sys_multi_purpose_int(
        VALID_RANGE(INT64_MIN, INT64_MAX), DEFAULT(0), BLOCK_SIZE(1),
        NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
 #endif
+
+bool disconnect_on_net_write_timeout= true;
+static Sys_var_bool Sys_disconnect_on_net_write_timeout(
+       "disconnect_on_net_write_timeout",
+       "Disconnect client connection if times out writing results to client.",
+       GLOBAL_VAR(disconnect_on_net_write_timeout),
+       CMD_LINE(OPT_ARG), DEFAULT(true));
+
 ulong shard_id = 1;
 static Sys_var_ulong Sys_shard_id(
     "shard_id",

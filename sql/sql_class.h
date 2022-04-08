@@ -1978,6 +1978,11 @@ class THD : public MDL_context_owner,
     if (skip_readonly_check) skip_readonly_check = false;
   }
 
+  bool got_net_error() const
+  {
+    return net.error != 0;
+  }
+
   void issue_unsafe_warnings();
 
   uint get_binlog_table_maps() const { return binlog_table_maps; }
