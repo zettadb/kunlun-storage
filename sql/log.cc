@@ -171,7 +171,7 @@ static const TABLE_FIELD_TYPE slow_query_log_table_fields[SQLT_FIELD_COUNT] = {
     {{STRING_WITH_LEN("comp_node_id")},
      {STRING_WITH_LEN("int unsigned")},
      {nullptr, 0}},
-    };
+};
 
 static const TABLE_FIELD_DEF slow_query_log_table_def = {
     SQLT_FIELD_COUNT, slow_query_log_table_fields};
@@ -206,10 +206,9 @@ static const TABLE_FIELD_TYPE general_log_table_fields[GLT_FIELD_COUNT] = {
     {{STRING_WITH_LEN("argument")},
      {STRING_WITH_LEN("mediumblob")},
      {nullptr, 0}},
-    {{STRING_WITH_LEN("extra_info") },
-     {STRING_WITH_LEN("varchar(255)") },
-     {STRING_WITH_LEN("latin1")}}
-};
+    {{STRING_WITH_LEN("extra_info")},
+     {STRING_WITH_LEN("varchar(255)")},
+     {STRING_WITH_LEN("latin1")}}};
 
 static const TABLE_FIELD_DEF general_log_table_def = {GLT_FIELD_COUNT,
                                                       general_log_table_fields};
@@ -659,10 +658,8 @@ bool File_query_log::write_general(ulonglong event_utime,
                                    my_thread_id thread_id,
                                    const char *command_type,
                                    size_t command_type_len,
-                                   const char *sql_text,
-                                   size_t sql_text_len,
-                                   const char *extra_info,
-                                   size_t extra_len) {
+                                   const char *sql_text, size_t sql_text_len,
+                                   const char *extra_info, size_t extra_len) {
   char buff[32];
   size_t length = 0;
 
@@ -697,11 +694,15 @@ bool File_query_log::write_general(ulonglong event_utime,
 
   // write extra info
   if (extra_info != nullptr && extra_info[0] != '\0' && extra_len > 0) {
-    if (my_b_write(&log_file, pointer_cast<const uchar*>("\t"), 1))
-      goto err;
-    if (my_b_write(&log_file, pointer_cast<const uchar*>(extra_info), extra_len))
+    if (my_b_write(&log_file, pointer_cast<const uchar *>("\t"), 1)) goto err;
+    if (my_b_write(&log_file, pointer_cast<const uchar *>(extra_info),
+                   extra_len))
       goto err;
 
+    if (my_b_write(&log_file, pointer_cast<const uchar *>("\n"), 1) ||
+        flush_io_cache(&log_file))
+      goto err;
+  } else {
     if (my_b_write(&log_file, pointer_cast<const uchar *>("\n"), 1) ||
         flush_io_cache(&log_file))
       goto err;
@@ -743,10 +744,11 @@ bool File_query_log::write_slow(THD *thd, ulonglong current_utime,
     if (my_b_write(&log_file, (uchar *)buff, buff_len)) goto err;
 
     buff_len = snprintf(buff, 32, "%5u", thd->thread_id());
-    if (my_b_printf(&log_file,
-          "# User@Host: %s  Id: %s  Global_conn_id:%u  Comp_node_id:%u\n",
-          user_host, buff, thd->variables.global_conn_id,
-		  thd->variables.comp_node_id) == (uint)-1)
+    if (my_b_printf(
+            &log_file,
+            "# User@Host: %s  Id: %s  Global_conn_id:%u  Comp_node_id:%u\n",
+            user_host, buff, thd->variables.global_conn_id,
+            thd->variables.comp_node_id) == (uint)-1)
       goto err;
   }
 
@@ -801,7 +803,7 @@ bool File_query_log::write_slow(THD *thd, ulonglong current_utime,
             "# Query_time: %s  Lock_time: %s"
             " Rows_sent: %lu  Rows_examined: %lu"
             " Thread_id: %lu OS_Thread_ID: %d Errno: %lu Killed: %lu"
-			" Global_conn_id: %u Computing node id: %u "
+            " Global_conn_id: %u Computing node id: %u "
             " Bytes_received: %lu Bytes_sent: %lu"
             " Read_first: %lu Read_last: %lu Read_key: %lu"
             " Read_next: %lu Read_prev: %lu"
@@ -994,11 +996,11 @@ bool Log_to_csv_event_handler::log_general(
   uint field_index;
   struct timeval tv;
 
-  const int extra_info_len= 255;
+  const int extra_info_len = 255;
   char extra_info[extra_info_len] = {'\0'};
   uint32 global_conn_id = 0;
-  Security_context *secctx = (thd ? thd->security_context () : nullptr);
-  size_t num_written= 0;
+  Security_context *secctx = (thd ? thd->security_context() : nullptr);
+  size_t num_written = 0;
 
   /*
     CSV uses TIME_to_timestamp() internally if table needs to be repaired
@@ -1073,15 +1075,13 @@ bool Log_to_csv_event_handler::log_general(
     global_conn_id = thd->get_global_connection_id();
   }
 
-  if (print_extra_info)
-  {
-    num_written=
-      snprintf(extra_info, extra_info_len, "%*s:%u-%u@%u",
-               (secctx ? (int)secctx->host_or_ip().length : 0),
-               (secctx ? secctx->host_or_ip().str : nullptr),
-               thd->peer_port, global_conn_id, thd->variables.comp_node_id);
-    if (num_written >= extra_info_len)
-      num_written= extra_info_len-1;
+  if (print_extra_info) {
+    num_written =
+        snprintf(extra_info, extra_info_len, "%*s:%u-%u@%u",
+                 (secctx ? (int)secctx->host_or_ip().length : 0),
+                 (secctx ? secctx->host_or_ip().str : nullptr), thd->peer_port,
+                 global_conn_id, thd->variables.comp_node_id);
+    if (num_written >= extra_info_len) num_written = extra_info_len - 1;
   }
 
   /*
@@ -1090,8 +1090,8 @@ bool Log_to_csv_event_handler::log_general(
   */
   if (table->field[GLT_FIELD_ARGUMENT]->store(sql_text, sql_text_len,
                                               client_cs) < 0 ||
-      (num_written > 0 && table->field[GLT_FIELD_EXTRA]->store(extra_info,
-                                           num_written, client_cs) < 0))
+      (num_written > 0 && table->field[GLT_FIELD_EXTRA]->store(
+                              extra_info, num_written, client_cs) < 0))
     goto err;
 
   /* mark all fields as not null */
@@ -1279,8 +1279,10 @@ bool Log_to_csv_event_handler::log_slow(
 
   table->field[SQLT_FIELD_THREAD_ID]->store((longlong)thd->thread_id(), true);
 
-  table->field[SQLT_FIELD_GLOBAL_CONN_ID]->store(thd->variables.global_conn_id, true);
-  table->field[SQLT_FIELD_COMP_NODE_ID]->store(thd->variables.comp_node_id, true);
+  table->field[SQLT_FIELD_GLOBAL_CONN_ID]->store(thd->variables.global_conn_id,
+                                                 true);
+  table->field[SQLT_FIELD_COMP_NODE_ID]->store(thd->variables.comp_node_id,
+                                               true);
 
   /* log table entries are not replicated */
   if (table->file->ha_write_row(table->record[0])) {
@@ -1420,25 +1422,23 @@ bool Log_to_file_event_handler::log_general(
   /*
    * Write extra info.
    * */
-  const size_t extra_info_len= 255;
+  const size_t extra_info_len = 255;
   char extra_info[extra_info_len] = {'\0'};
   uint32 global_conn_id = 0;
   if (thd) global_conn_id = thd->get_global_connection_id();
-  Security_context *secctx = (thd ? thd->security_context () : nullptr);
-  size_t num_written= 0;
+  Security_context *secctx = (thd ? thd->security_context() : nullptr);
+  size_t num_written = 0;
   if (print_extra_info) {
     snprintf(extra_info, extra_info_len, "%*s:%u %u@%u",
              (secctx ? (int)secctx->host_or_ip().length : 0),
-             (secctx ? secctx->host_or_ip().str : nullptr),
-             thd->peer_port, global_conn_id, thd->variables.comp_node_id);
-    if (num_written >= extra_info_len)
-      num_written= extra_info_len-1;
+             (secctx ? secctx->host_or_ip().str : nullptr), thd->peer_port,
+             global_conn_id, thd->variables.comp_node_id);
+    if (num_written >= extra_info_len) num_written = extra_info_len - 1;
   }
 
-  bool retval =
-      mysql_general_log.write_general(event_utime, thread_id, command_type,
-                                      command_type_len, sql_text, sql_text_len,
-                                      extra_info, num_written);
+  bool retval = mysql_general_log.write_general(
+      event_utime, thread_id, command_type, command_type_len, sql_text,
+      sql_text_len, extra_info, num_written);
   thd->pop_internal_handler();
   return retval;
 }
@@ -1574,7 +1574,7 @@ bool Query_logger::general_log_write(THD *thd, enum_server_command command,
 
   // In this case we must temporarily activate logging. and since general_log
   // is global, all sessions will print logs in this small window.
-  bool tmp_activate= (!opt_general_log && is_kill_cmd);
+  bool tmp_activate = (!opt_general_log && is_kill_cmd);
   if (tmp_activate && query_logger.activate_log_handler(thd, QUERY_LOG_GENERAL))
     return true;
 
@@ -1591,8 +1591,7 @@ bool Query_logger::general_log_write(THD *thd, enum_server_command command,
   }
   mysql_rwlock_unlock(&LOCK_logger);
 
-  if (tmp_activate)
-    deactivate_log_handler(QUERY_LOG_GENERAL); 
+  if (tmp_activate) deactivate_log_handler(QUERY_LOG_GENERAL);
   return error;
 }
 
@@ -1813,13 +1812,15 @@ static ulonglong get_query_exec_time(THD *thd, ulonglong cur_utime) {
 }
 
 static void copy_global_to_session(THD *thd, ulong flag, const ulong *val) {
-  const ptrdiff_t offset = ((const char *)val - (const char *)&global_system_variables);
+  const ptrdiff_t offset =
+      ((const char *)val - (const char *)&global_system_variables);
   if (opt_slow_query_log_use_global_control & (1ULL << flag))
     *(ulong *)((char *)&thd->variables + offset) = *val;
 }
 
 static void copy_global_to_session(THD *thd, ulong flag, const ulonglong *val) {
-  const ptrdiff_t offset = ((const char *)val - (const char *)&global_system_variables);
+  const ptrdiff_t offset =
+      ((const char *)val - (const char *)&global_system_variables);
   if (opt_slow_query_log_use_global_control & (1ULL << flag))
     *(ulonglong *)((char *)&thd->variables + offset) = *val;
 }
@@ -1867,7 +1868,7 @@ bool log_slow_applicable(THD *thd, int sp_sql_command) {
   /* Follow the slow log filter configuration. */
   if (thd->variables.log_slow_filter != 0 &&
       !(thd->variables.log_slow_filter & thd->query_plan_flags))
-	 return false;
+    return false;
 
   /*
     Don't log the CALL statement if slow statements logging
@@ -1879,13 +1880,13 @@ bool log_slow_applicable(THD *thd, int sp_sql_command) {
         assert(sp_sql_command != -1);
         if (sp_sql_command == SQLCOM_CALL) return false;
       } else
-	 return false;
+        return false;
     } else if (thd->lex->sql_command == SQLCOM_EXECUTE) {
       Prepared_statement *stmt;
       LEX_CSTRING *name = &thd->lex->prepared_stmt_name;
       if ((stmt = thd->stmt_map.find_by_name(*name)) != NULL && stmt->lex &&
           stmt->lex->sql_command == SQLCOM_CALL)
-	 return false;
+        return false;
     }
   }
 
@@ -1896,7 +1897,7 @@ bool log_slow_applicable(THD *thd, int sp_sql_command) {
       query_exec_time < slow_query_log_always_write_time &&
       (thd->variables.long_query_time >= 1000000 ||
        (ulong)query_exec_time < 1000000)) {
-	  return false;
+    return false;
   }
   if (opt_slow_query_log_rate_type == SLOG_RT_SESSION &&
       thd->variables.log_slow_rate_limit &&
@@ -1904,7 +1905,7 @@ bool log_slow_applicable(THD *thd, int sp_sql_command) {
       query_exec_time < slow_query_log_always_write_time &&
       (thd->variables.long_query_time >= 1000000 ||
        (ulong)query_exec_time < 1000000)) {
-	  return false;
+    return false;
   }
 
   bool warn_no_index =

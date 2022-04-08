@@ -531,7 +531,8 @@ CREATE TABLE `db_17876.general_log_data` (
   `thread_id` bigint(21) unsigned not NULL,
   `server_id` int(11) DEFAULT NULL,
   `command_type` varchar(64) DEFAULT NULL,
-  `argument` mediumblob
+  `argument` mediumblob,
+  `extra_info` varchar(255) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL
 );
 
 DELIMITER //;
@@ -589,6 +590,7 @@ BEGIN
   DECLARE sql_text BLOB;
   DECLARE done INT DEFAULT 0;
   DECLARE command_type VARCHAR(64);
+  DECLARE extra_info VARCHAR(255);
   DECLARE ER_SP_FETCH_NO_DATA CONDITION for 1329;
 
   DECLARE cur1 CURSOR FOR SELECT * FROM mysql.general_log;
@@ -602,7 +604,7 @@ BEGIN
 
         FETCH cur1 INTO
           event_time, user_host, thread_id, server_id,
-          command_type, argument;
+          command_type, argument, extra_info;
       END;
 
       IF NOT done THEN
@@ -610,7 +612,7 @@ BEGIN
           INSERT INTO
             `db_17876.general_log_data`
             VALUES(event_time, user_host, thread_id, server_id,
-            command_type, argument);
+            command_type, argument, extra_info);
         END;
       END IF;
     END;
