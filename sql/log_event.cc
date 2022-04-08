@@ -183,6 +183,9 @@ extern bool pfs_processlist_enabled;
 using std::max;
 using std::min;
 
+#define IS_DDL_STMT(sqlcmd) \
+    ((sql_command_flags[(sqlcmd)] & (CF_DISALLOW_IN_RO_TRANS | CF_AUTO_COMMIT_TRANS)) == (CF_DISALLOW_IN_RO_TRANS | CF_AUTO_COMMIT_TRANS))
+
 /**
   BINLOG_CHECKSUM variable.
 */
@@ -3875,6 +3878,11 @@ Query_log_event::Query_log_event(THD *thd_arg, const char *query_arg,
   slave_proxy_id = thd_arg->variables.pseudo_thread_id;
   common_header->set_is_valid(query != nullptr);
 
+  if (query != 0 &&
+      (IS_DDL_STMT(thd_arg->lex->sql_command))) {
+    header()->flags |= LOG_EVENT_DDL_F;
+  }
+
   /*
   exec_time calculation has changed to use the same method that is used
   to fill out "thd_arg->start_time"
@@ -4230,9 +4238,10 @@ void Query_log_event::print_query_header(
       longlong10_to_str(ddl_xid, xid_buf + strlen(xid_assign), 10);
     }
     print_header(file, print_event_info, false);
-    my_b_printf(file, "\t%s\tthread_id=%lu\texec_time=%lu\terror_code=%d%s\n",
+    my_b_printf(file, "\t%s\tthread_id=%lu\texec_time=%lu\terror_code=%d%s%s\n",
                 get_type_str(), (ulong)thread_id, (ulong)exec_time, error_code,
-                xid_buf);
+                xid_buf,
+                (header()->flags & LOG_EVENT_DDL_F) ? "\tDDL" : "");
   }
 
   if ((common_header->flags & LOG_EVENT_SUPPRESS_USE_F)) {
@@ -12883,6 +12892,11 @@ Gtid_log_event::Gtid_log_event(THD *thd_arg, bool using_trans,
                             : Log_event::EVENT_STMT_CACHE,
                 Log_event::EVENT_NORMAL_LOGGING, header(), footer()) {
   DBUG_TRACE;
+
+  if (IS_DDL_STMT(thd_arg->lex->sql_command)) {
+    header()->flags |= LOG_EVENT_DDL_F;
+  }
+
   if (thd->owned_gtid.sidno > 0) {
     spec.set(thd->owned_gtid);
     sid = thd->owned_sid;
@@ -12985,13 +12999,14 @@ void Gtid_log_event::print(FILE *, PRINT_EVENT_INFO *print_event_info) const {
                 "rbr_only=%s\t"
                 "original_committed_timestamp=%llu\t"
                 "immediate_commit_timestamp=%llu\t"
-                "transaction_length=%llu\n",
+                "transaction_length=%llu%s\n",
                 get_type_code() == binary_log::GTID_LOG_EVENT
                     ? "GTID"
                     : "Anonymous_GTID",
                 last_committed, sequence_number,
                 may_have_sbr_stmts ? "no" : "yes", original_commit_timestamp,
-                immediate_commit_timestamp, transaction_length);
+                immediate_commit_timestamp, transaction_length,
+                (header()->flags & LOG_EVENT_DDL_F) ? "\tDDL" : "");
   }
 
   /*

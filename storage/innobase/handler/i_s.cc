@@ -535,6 +535,24 @@ static ST_FIELD_INFO innodb_trx_fields_info[] = {
      STRUCT_FLD(field_flags, MY_I_S_UNSIGNED | MY_I_S_MAYBE_NULL),
      STRUCT_FLD(old_name, ""), STRUCT_FLD(open_method, 0)},
 
+#define IDX_TRX_XID    25
+   {STRUCT_FLD(field_name,     "trx_xid"),
+    STRUCT_FLD(field_length,   300),
+    STRUCT_FLD(field_type,     MYSQL_TYPE_STRING),
+    STRUCT_FLD(value,      0),
+    STRUCT_FLD(field_flags,    MY_I_S_MAYBE_NULL),
+    STRUCT_FLD(old_name,       ""),
+    STRUCT_FLD(open_method,    0)},
+
+#define IDX_TRX_TYPE   26
+   {STRUCT_FLD(field_name,     "trx_xa_type"),
+    STRUCT_FLD(field_length,   16),
+    STRUCT_FLD(field_type,     MYSQL_TYPE_STRING),
+    STRUCT_FLD(value,      0),
+    STRUCT_FLD(field_flags,    MY_I_S_MAYBE_NULL),
+    STRUCT_FLD(old_name,       ""),
+    STRUCT_FLD(open_method,    0)},
+
     END_OF_ST_FIELD_INFO};
 
 /** Read data from cache buffer and fill the INFORMATION_SCHEMA.innodb_trx
@@ -666,6 +684,14 @@ static int fill_innodb_trx_from_cache(
     } else {
       fields[IDX_TRX_SCHEDULE_WEIGHT]->set_null();
     }
+
+    // store trx xid and type.
+    const char *trx_xid = row->trx_xid;
+    if (trx_xid[0] == '\0')
+      trx_xid = NULL;
+    const char *trx_xa_type = row->trx_xa_type;
+    OK(field_store_string(fields[IDX_TRX_XID], trx_xid));
+    OK(field_store_string(fields[IDX_TRX_TYPE], trx_xa_type));
 
     OK(schema_table_store_record(thd, table));
   }
@@ -872,24 +898,6 @@ static ST_FIELD_INFO i_s_cmp_fields_info[] = {
                 "Total Duration of Decompressions,"
                 " in Seconds"),
      STRUCT_FLD(open_method, 0)},
-
-#define IDX_TRX_XID    24
-   {STRUCT_FLD(field_name,     "trx_xid"),
-    STRUCT_FLD(field_length,   300),
-    STRUCT_FLD(field_type,     MYSQL_TYPE_STRING),
-    STRUCT_FLD(value,      0),
-    STRUCT_FLD(field_flags,    MY_I_S_MAYBE_NULL),
-    STRUCT_FLD(old_name,       ""),
-    STRUCT_FLD(open_method,    0)},
-
-#define IDX_TRX_TYPE   25
-   {STRUCT_FLD(field_name,     "trx_xa_type"),
-    STRUCT_FLD(field_length,   16),
-    STRUCT_FLD(field_type,     MYSQL_TYPE_STRING),
-    STRUCT_FLD(value,      0),
-    STRUCT_FLD(field_flags,    MY_I_S_MAYBE_NULL),
-    STRUCT_FLD(old_name,       ""),
-    STRUCT_FLD(open_method,    0)},
 
     END_OF_ST_FIELD_INFO};
 
@@ -2183,14 +2191,6 @@ static int i_s_stopword_fill(THD *thd,           /*!< in: thread */
   fts_default_stopword */
   while (fts_default_stopword[i]) {
     OK(field_store_string(fields[STOPWORD_VALUE], fts_default_stopword[i]));
-
-    // store trx xid and type.
-    const char *trx_xid = row->trx_xid;
-    if (trx_xid[0] == '\0')
-      trx_xid = NULL;
-    const char *trx_xa_type = row->trx_xa_type;
-    OK(field_store_string(fields[IDX_TRX_XID], trx_xid));
-    OK(field_store_string(fields[IDX_TRX_TYPE], trx_xa_type));
 
     OK(schema_table_store_record(thd, table));
     i++;

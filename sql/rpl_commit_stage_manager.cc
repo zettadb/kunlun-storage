@@ -27,6 +27,7 @@
 #include "sql/rpl_commit_stage_manager.h"
 #include "sql/rpl_replica_commit_order_manager.h"  // Commit_order_manager
 #include "sql/rpl_rli_pdb.h"  // Slave_worker                    // Slave_worker
+#include "mysql/service_thd_wait.h"
 
 class Slave_worker;
 class Commit_order_manager;

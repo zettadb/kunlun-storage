@@ -321,6 +321,16 @@ int ignored_error_code(int err_code);
 */
 #define LOG_EVENT_MTS_ISOLATE_F 0x200
 
+/**
+ * It's only ever set to a Query_log_event or a Gtid_log_event.
+ * Set to the Query_log_event iff the stmt is a DDL or
+ * to the Gtid_log_event iff the binlog event group wraps a DDL stmt.
+ *
+ * We want to quickly & easily identify such stmt&txn for jobs like
+ * fast handling of slave IO thread relay log sync.
+ * */
+#define LOG_EVENT_DDL_F 0x8000
+
 /** @}*/
 
 /**
@@ -1569,7 +1579,8 @@ class Query_log_event : public virtual binary_log::Query_event,
     return !strncmp(query, "COMMIT", q_len) ||
            (!native_strncasecmp(query, STRING_WITH_LEN("ROLLBACK")) &&
             native_strncasecmp(query, STRING_WITH_LEN("ROLLBACK TO "))) ||
-           !strncmp(query, STRING_WITH_LEN("XA ROLLBACK"));
+           !strncmp(query, STRING_WITH_LEN("XA ROLLBACK")) ||
+           !strncmp(query, STRING_WITH_LEN("XA COMMIT"));
   }
   static size_t get_query(const char *buf, size_t length,
                           const Format_description_event *fd_event,
