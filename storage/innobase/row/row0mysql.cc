@@ -4821,7 +4821,7 @@ dberr_t row_rename_table_for_mysql(const char *old_name, const char *new_name,
                " with the new table definition.";
       }
 
-      dberr_t error = dict_table_rename_in_cache(table, old_name, FALSE);
+      dberr_t error = dict_table_rename_in_cache(table, old_name, FALSE, true);
 
       ut_a(error == DB_SUCCESS);
       goto funct_exit;
@@ -4831,7 +4831,7 @@ dberr_t row_rename_table_for_mysql(const char *old_name, const char *new_name,
 
     if (dict_foreigns_has_s_base_col(table->foreign_set, table)) {
       err = DB_NO_FK_ON_S_BASE_COL;
-      dberr_t error = dict_table_rename_in_cache(table, old_name, FALSE);
+      dberr_t error = dict_table_rename_in_cache(table, old_name, FALSE, true);
 
       ut_a(error == DB_SUCCESS);
       goto funct_exit;

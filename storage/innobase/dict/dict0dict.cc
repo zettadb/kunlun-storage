@@ -1477,9 +1477,10 @@ struct dict_foreign_remove_partial {
 dberr_t dict_table_rename_in_cache(
     dict_table_t *table,        /*!< in/out: table */
     const char *new_name,       /*!< in: new name */
-    ibool rename_also_foreigns) /*!< in: in ALTER TABLE we want
+    ibool rename_also_foreigns, /*!< in: in ALTER TABLE we want
                            to preserve the original table name
                            in constraints which reference it */
+    bool must_succeed)
 {
   dberr_t err;
   dict_foreign_t *foreign;
@@ -1601,7 +1602,8 @@ dberr_t dict_table_rename_in_cache(
     dict_name::convert_to_space(new_tablespace_name);
 
     dberr_t err = fil_rename_tablespace(table->space, old_path,
-                                        new_tablespace_name.c_str(), new_path);
+                                        new_tablespace_name.c_str(), new_path,
+                                        must_succeed);
 
     clone_mark_active();
 

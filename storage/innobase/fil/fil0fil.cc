@@ -1076,7 +1076,8 @@ class Fil_shard {
                                   is located in the normal data directory
   @return InnoDB error code */
   dberr_t space_rename(space_id_t space_id, const char *old_path,
-                       const char *new_name, const char *new_path_in)
+                       const char *new_name, const char *new_path_in,
+                       bool must_succeed)
       MY_ATTRIBUTE((warn_unused_result));
 
   /** Deletes an IBD or IBU tablespace.
@@ -5556,7 +5557,8 @@ The tablespace must exist in the memory cache.
                                 in the normal data directory
 @return InnoDB error code */
 dberr_t Fil_shard::space_rename(space_id_t space_id, const char *old_path,
-                                const char *new_name, const char *new_path_in) {
+                                const char *new_name, const char *new_path_in,
+                                bool must_succeed) {
   fil_space_t *space;
   ulint count = 0;
   fil_node_t *file = nullptr;
@@ -5609,7 +5611,7 @@ dberr_t Fil_shard::space_rename(space_id_t space_id, const char *old_path,
 
       continue;
 
-    } else if (count > 25000) {
+    } else if (count > 25000 && !must_succeed) {
       mutex_release();
 
       return DB_ERROR;
@@ -5812,10 +5814,11 @@ The tablespace must exist in the memory cache.
 the normal data directory
 @return InnoDB error code */
 dberr_t fil_rename_tablespace(space_id_t space_id, const char *old_path,
-                              const char *new_name, const char *new_path_in) {
+                              const char *new_name, const char *new_path_in,
+                              bool must_succeed) {
   auto shard = fil_system->shard_by_id(space_id);
 
-  dberr_t err = shard->space_rename(space_id, old_path, new_name, new_path_in);
+  dberr_t err = shard->space_rename(space_id, old_path, new_name, new_path_in, must_succeed);
 
   return err;
 }

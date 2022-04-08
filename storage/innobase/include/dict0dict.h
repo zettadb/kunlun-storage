@@ -288,7 +288,8 @@ void dict_table_remove_from_cache_debug(dict_table_t *table, bool lru_evict);
  @return true if success */
 dberr_t dict_table_rename_in_cache(dict_table_t *table,  /*!< in/out: table */
                                    const char *new_name, /*!< in: new name */
-                                   ibool rename_also_foreigns)
+                                   ibool rename_also_foreigns,
+                                   bool must_succeed = false)
     /*!< in: in ALTER TABLE we want
     to preserve the original table name
     in constraints which reference it */

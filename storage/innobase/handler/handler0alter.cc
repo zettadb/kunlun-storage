@@ -7122,12 +7122,12 @@ inline void commit_cache_rebuild(ha_innobase_inplace_ctx *ctx) {
 
   /* We already committed and redo logged the renames,
   so this must succeed. */
-  error = dict_table_rename_in_cache(ctx->old_table, ctx->tmp_name, FALSE);
+  error = dict_table_rename_in_cache(ctx->old_table, ctx->tmp_name, FALSE, true);
   ut_a(error == DB_SUCCESS);
 
   DEBUG_SYNC_C("commit_cache_rebuild_middle");
 
-  error = dict_table_rename_in_cache(ctx->new_table, old_name, FALSE);
+  error = dict_table_rename_in_cache(ctx->new_table, old_name, FALSE, true);
   ut_a(error == DB_SUCCESS);
 }
 

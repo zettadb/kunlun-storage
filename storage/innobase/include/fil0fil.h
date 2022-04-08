@@ -1779,7 +1779,8 @@ The tablespace must exist in the memory cache.
 the normal data directory
 @return InnoDB error code */
 dberr_t fil_rename_tablespace(space_id_t space_id, const char *old_path,
-                              const char *new_name, const char *new_path_in)
+                              const char *new_name, const char *new_path_in,
+                              bool must_succeed = false)
     MY_ATTRIBUTE((warn_unused_result));
 
 /** Create an IBD tablespace file.
