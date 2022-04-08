@@ -99,7 +99,8 @@ class Query_result_delete final : public Query_result_interceptor {
 class Sql_cmd_delete final : public Sql_cmd_dml {
  public:
   Sql_cmd_delete(bool multitable_arg, SQL_I_List<TABLE_LIST> *delete_tables_arg)
-      : multitable(multitable_arg), delete_tables(delete_tables_arg) {}
+      : multitable(multitable_arg), delete_tables(delete_tables_arg),
+	    returning_list(*THR_MALLOC) {}
 
   enum_sql_command sql_command_code() const override {
     return multitable ? SQLCOM_DELETE_MULTI : SQLCOM_DELETE;
@@ -127,6 +128,8 @@ class Sql_cmd_delete final : public Sql_cmd_dml {
     optimization, use the TABLE_LIST::updating property instead.
   */
   SQL_I_List<TABLE_LIST> *delete_tables;
+ public:
+  mem_root_deque<Item*> returning_list;
 };
 
 #endif /* SQL_DELETE_INCLUDED */

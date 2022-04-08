@@ -3352,6 +3352,10 @@ bool Protocol_classic::send_field_metadata(Send_field *field,
   return false;
 }
 
+/*
+  In server mode(non-embedded mode), this call always writes current result row
+  into net buffer, may or may not trigger a socket write.
+*/
 bool Protocol_classic::end_row() {
   DBUG_TRACE;
   return my_net_write(&m_thd->net, pointer_cast<uchar *>(packet->ptr()),

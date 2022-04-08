@@ -4009,6 +4009,13 @@ class Item_field : public Item_ident {
     uses of table_ref is not needed.
   */
   TABLE_LIST *table_ref;
+  /*
+   * Regarding 'field' and 'result_field':
+    If the item points to a table result row filed, the 'field' and
+    'result_field' point to the same Filed object which points into the table's
+    row buffer. If the result is in a temp table or other place than the table's
+    row buffer, the 'result_field' points to that place, and 'field' doesn't.
+  */
   /// Source field
   Field *field;
 

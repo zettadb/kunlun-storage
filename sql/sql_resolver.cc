@@ -524,7 +524,8 @@ bool Query_block::prepare(THD *thd, mem_root_deque<Item *> *insert_field_list) {
     blocks.
   */
   if (!thd->lex->is_view_context_analysis() &&
-      (outer_query_block() == nullptr ||
+      ((outer_query_block() == nullptr && parent_lex->sql_command != SQLCOM_UPDATE &&
+       parent_lex->sql_command != SQLCOM_DELETE) ||
        ((parent_lex->sql_command == SQLCOM_SET_OPTION ||
          parent_lex->sql_command == SQLCOM_END) &&
         outer_query_block()->outer_query_block() == nullptr)) &&
@@ -536,6 +537,9 @@ bool Query_block::prepare(THD *thd, mem_root_deque<Item *> *insert_field_list) {
       - if this is an outer-most query block of a SELECT or multi-table
       UPDATE/DELETE statement. Notice that for a UNION, this applies to
       all query blocks. It also applies to a fake_query_block object.
+      dzw: Also note that update/delete...returning stmt will call
+      Query_block::prepare() but we should not invoke this branch in those
+      stmts because according to exist comment they are not intended here.
       - if this is one of highest-level subqueries, if the statement is
       something else; like subq-i in:
       UPDATE t1 SET col1=(subq-1), col2=(subq-2);
@@ -612,6 +616,61 @@ bool Query_block::push_conditions_to_derived_tables(THD *thd) {
   }
   return false;
 }
+
+bool Query_block::setup_wild_in_returning(THD *thd)
+{
+  DBUG_ENTER("SELECT_LEX::setup_wild_in_returning");
+
+  assert(with_wild);
+
+  // PS/SP uses arena so that changes are made permanently.
+  Prepared_stmt_arena_holder ps_arena_holder(thd);
+
+
+  for (auto it = returning_list.begin();
+       with_wild > 0 && it != returning_list.end(); ++it)
+  {
+    Item *item = *it;
+    Item_field *item_field;
+    if (item->hidden) continue;
+    if (item->type() == Item::FIELD_ITEM &&
+        (item_field= (Item_field *) item) &&
+        item_field->is_asterisk())
+    {
+      const bool any_privileges= item_field->any_privileges;
+      Item_subselect *subsel = master_query_expression()->item;
+
+      /*
+        In case of EXISTS(SELECT * ... HAVING ...), don't use this
+        transformation. The columns in HAVING will need to resolve to the
+        select list. Replacing * with 1 effectively eliminates this
+        possibility.
+      */
+      if (subsel && subsel->substype() == Item_subselect::EXISTS_SUBS &&
+          !having_cond())
+      {
+        /*
+          It is EXISTS(SELECT * ...) and we can replace * by any constant.
+
+          Item_int do not need fix_fields() because it is basic constant.
+        */
+        *it = new Item_int(NAME_STRING("Not_used"), (longlong) 1,
+                                MY_INT64_NUM_DECIMAL_DIGITS);
+      }
+      else
+      {
+        assert(item_field->context == &this->context);
+        if (insert_fields(thd, this, item_field->db_name,
+                          item_field->table_name, &returning_list, &it, any_privileges))
+          DBUG_RETURN(true);
+      }
+      with_wild--;
+    }
+  }
+
+  DBUG_RETURN(false);
+}
+
 
 /**
   Prepare a table value constructor query block for optimization.
@@ -1566,7 +1625,8 @@ bool Query_block::setup_wild(THD *thd) {
   // PS/SP uses arena so that changes are made permanently.
   Prepared_stmt_arena_holder ps_arena_holder(thd);
 
-  for (auto it = fields.begin(); with_wild > 0 && it != fields.end(); ++it) {
+  for (mem_root_deque<Item *>::iterator it = fields.begin();
+  	   with_wild > 0 && it != fields.end(); ++it) {
     Item *item = *it;
     if (item->hidden) continue;
     Item_field *item_field;

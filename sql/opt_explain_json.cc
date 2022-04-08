@@ -158,7 +158,7 @@ static const char K_SORT_COST[] = "sort_cost";
 static const char K_QUERY_COST[] = "query_cost";
 static const char K_DATA_SIZE_QUERY[] = "data_read_per_join";
 static const char K_USED_COLUMNS[] = "used_columns";
-
+static const char K_SQ_RETURNING_LIST[]=            "returning_list_subqueries";
 static const char *mod_type_name[] = {"", "insert", "update", "delete",
                                       "replace"};
 
@@ -184,6 +184,7 @@ enum subquery_list_enum {
                       ///< INSERT ... ON DUPLICATE KEY UPDATE
   SQ_HAVING,          ///< HAVING clause subqueries
   SQ_OPTIMIZED_AWAY,  ///< "optimized_away_subqueries"
+  SQ_RETURNING_LIST,    ///< RETURNING clause subqueries
   //--------------
   SQ_toplevel,  ///< SQ array size for unit_ctx
   //--------------
@@ -203,6 +204,7 @@ static const char *list_names[SQ_total] = {
     K_INSERT_UPDATE_SUBQUERIES,
     K_HAVING_SUBQUERIES,
     K_OPTIMIZED_AWAY_SUBQUERIES,
+    K_SQ_RETURNING_LIST,
     "",
     K_ORDER_BY_SUBQUERIES,
     K_GROUP_BY_SUBQUERIES,
@@ -1684,6 +1686,7 @@ bool Explain_format_JSON::begin_context(enum_parsing_context ctx_arg,
              current_context->type == CTX_HAVING ||
              current_context->type == CTX_ORDER_BY_SQ ||
              current_context->type == CTX_GROUP_BY_SQ ||
+			 current_context->type == CTX_RETURNING_LIST ||
              current_context->type == CTX_QUERY_SPEC);
       if ((current_context = new (*THR_MALLOC)
                join_ctx(CTX_JOIN, K_QUERY_BLOCK, current_context)) == nullptr)
@@ -1868,6 +1871,16 @@ bool Explain_format_JSON::begin_context(enum_parsing_context ctx_arg,
       current_context = ctx;
       break;
     }
+    case CTX_RETURNING_LIST:
+    {
+      subquery_ctx *ctx= new subquery_ctx(CTX_RETURNING_LIST, nullptr,
+                                          current_context);
+      if (ctx == nullptr ||
+          current_context->add_subquery(SQ_RETURNING_LIST, ctx))
+        return true;
+      current_context= ctx;
+      break;
+    }
     case CTX_DERIVED: {
       current_context = new (*THR_MALLOC) subquery_ctx(
           CTX_DERIVED, K_MATERIALIZED_FROM_SUBQUERY, current_context);
@@ -1927,6 +1940,7 @@ bool Explain_format_JSON::begin_context(enum_parsing_context ctx_arg,
              current_context->type == CTX_HAVING ||
              current_context->type == CTX_ORDER_BY_SQ ||
              current_context->type == CTX_GROUP_BY_SQ ||
+			 current_context->type == CTX_RETURNING_LIST ||
              current_context->type == CTX_QUERY_SPEC);
       current_context = new (*THR_MALLOC) union_ctx(current_context);
       if (current_context == nullptr) return true;

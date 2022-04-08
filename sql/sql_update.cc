@@ -110,6 +110,8 @@
 #include "sql/trigger_def.h"
 #include "template_utils.h"
 #include "thr_lock.h"
+#include "sql/protocol.h"
+#include "sql/query_result.h"
 
 class COND_EQUAL;
 
@@ -123,6 +125,11 @@ bool Sql_cmd_update::precheck(THD *thd) {
   if (!multitable) {
     if (check_one_table_access(thd, UPDATE_ACL, lex->query_tables)) return true;
   } else {
+    if (!lex->query_block->returning_list.empty())
+    {
+      my_error(ER_NOT_SUPPORTED_YET, MYF(0), "Multi-table update returning");
+      return true;
+    }
     /*
       Ensure that we have UPDATE or SELECT privilege for each table
       The exact privilege is checked in mysql_multi_update()
@@ -374,6 +381,8 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
 
   const bool safe_update = thd->variables.option_bits & OPTION_SAFE_UPDATES;
 
+  const bool returning_result= (query_block->returning_list.size() > 0 &&
+                                thd->system_thread == NON_SYSTEM_THREAD);
   assert(!(table->all_partitions_pruned_away || m_empty_query));
 
   Item *conds = nullptr;
@@ -567,7 +576,7 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
   unique_ptr_destroy_only<RowIterator> iterator;
 
   {  // Start of scope for Modification_plan
-    ha_rows rows;
+    ha_rows rows, rows_sent = 0;
     if (qep_tab.quick())
       rows = qep_tab.quick()->records;
     else if (!conds && !need_sort && limit != HA_POS_ERROR)
@@ -797,7 +806,7 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
     /// read_removal is only used by NDB storage engine
     bool read_removal = false;
 
-    if (has_after_triggers) {
+    if (has_after_triggers || returning_result) {
       /*
         The table has AFTER UPDATE triggers that might access to subject
         table and therefore might need update to be done immediately.
@@ -815,6 +824,13 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
         check_constant_expressions(*update_value_list))
       read_removal = table->check_read_removal(qep_tab.quick()->index);
 
+    Query_result* qres= query_block->query_result();
+    assert((!qres && !returning_result) || (qres && returning_result));
+    if (returning_result)
+    {
+      qres->send_result_set_metadata(thd, query_block->returning_list,
+          Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF);
+    }
     // If the update is batched, we cannot do partial update, so turn it off.
     if (will_batch) table->cleanup_partial_update(); /* purecov: inspected */
 
@@ -954,8 +970,14 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
             error =
                 table->file->ha_update_row(table->record[1], table->record[0]);
           }
-          if (error == 0)
+          if (error == 0) {
             updated_rows++;
+            if (returning_result)
+            {
+              qres->send_data(thd, query_block->returning_list);
+              rows_sent++;
+            }
+          }
           else if (error == HA_ERR_RECORD_IS_THE_SAME)
             error = 0;
           else {
@@ -1071,6 +1093,7 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
       if (!records_are_comparable(table)) found_rows = updated_rows;
     }
 
+    if (returning_result) query_block->query_result()->send_eof(thd);
   }  // End of scope for Modification_plan
 
   if (!transactional_table && updated_rows > 0)
@@ -1121,7 +1144,8 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
         thd->get_protocol()->has_client_capability(CLIENT_FOUND_ROWS)
             ? found_rows
             : updated_rows;
-    my_ok(thd, row_count, id, buff);
+    if (!returning_result)
+      my_ok(thd, row_count, id, buff);
     thd->updated_row_count += row_count;
     DBUG_PRINT("info", ("%ld records updated", (long)updated_rows));
   }
@@ -1417,6 +1441,10 @@ bool Sql_cmd_update::prepare_inner(THD *thd) {
   Opt_trace_object trace_prepare(trace, "update_preparation");
   trace_prepare.add_select_number(select->select_number);
 
+  const bool returning_result= (select->returning_list.size() > 0 &&
+                                thd->system_thread == NON_SYSTEM_THREAD &&
+                                !multitable);
+
   if (!select->top_join_list.empty())
     propagate_nullability(&select->top_join_list, false);
 
@@ -1449,6 +1477,12 @@ bool Sql_cmd_update::prepare_inner(THD *thd) {
       functionality for detailed privilege checking.
     */
     if (select->check_view_privileges(thd, UPDATE_ACL, SELECT_ACL)) return true;
+
+    if (!select->returning_list.empty())
+    {
+      my_error(ER_NOT_SUPPORTED_YET, MYF(0), "Multi-table update returning");
+      return true;
+    }
   }
 
   /*
@@ -1508,10 +1542,14 @@ bool Sql_cmd_update::prepare_inner(THD *thd) {
 
   lex->allow_sum_func = 0;  // Query block cannot be aggregated
 
+  // Associate Item_field objects appearing in where clause with
+  // Field objects which point to row buffer.
   if (select->setup_conds(thd)) return true;
 
   if (select->setup_base_ref_items(thd)) return true; /* purecov: inspected */
 
+  // Associate Item_field objects appearing in field assignments with
+  // Field objects which point to row buffer.
   if (setup_fields(thd, /*want_privilege=*/UPDATE_ACL,
                    /*allow_sum_func=*/false, /*split_sum_funcs=*/false,
                    /*column_update=*/true, /*typed_items=*/nullptr,
@@ -1545,6 +1583,21 @@ bool Sql_cmd_update::prepare_inner(THD *thd) {
                    /*column_update=*/false, &select->fields, update_value_list,
                    Ref_item_array()))
     return true; /* purecov: inspected */
+
+  if (returning_result)
+  {
+    Query_result_send *qrs= new (thd->mem_root) Query_result_send;
+    select->set_query_result(qrs);
+    if (select->with_wild && select->setup_wild_in_returning(thd))
+      return true;
+  }
+  // Associate Item_field objects in 'returning clause' with
+  // Field objects like above.
+  if (setup_fields(thd, /*want_privilege=*/SELECT_ACL,
+                     /*allow_sum_func=*/false, /*split_sum_funcs=*/false,
+                     /*column_update=*/false, /*typed_items=*/nullptr,
+					 &select->returning_list, Ref_item_array()))
+    return true;                     /* purecov: inspected */
 
   thd->mark_used_columns = mark_used_columns_saved;
 
@@ -1990,6 +2043,8 @@ bool Query_result_update::optimize() {
           The table has AFTER UPDATE triggers that might access to subject
           table and therefore might need update to be done immediately.
           So we turn-off the batching.
+          And we do not support returning in batch update mode, so turn it off if
+          the query has returning clause.
         */
         (void)table->file->ha_extra(HA_EXTRA_UPDATE_CANNOT_BATCH);
       }
@@ -2864,5 +2919,10 @@ bool Sql_cmd_update::accept(THD *thd, Select_lex_visitor *visitor) {
   if (select->has_limit()) {
     if (walk_item(select->select_limit, visitor)) return true;
   }
+
+  // Returning clause
+  for (Item *item : returning_list)
+    if (walk_item(item, visitor)) return true;
+
   return visitor->visit(select);
 }

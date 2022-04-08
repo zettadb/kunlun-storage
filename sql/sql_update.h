@@ -142,7 +142,8 @@ class Sql_cmd_update final : public Sql_cmd_dml {
   Sql_cmd_update(bool multitable_arg, mem_root_deque<Item *> *update_values)
       : multitable(multitable_arg),
         original_fields(*THR_MALLOC),
-        update_value_list(update_values) {}
+        update_value_list(update_values),
+		returning_list(*THR_MALLOC) {}
 
   enum_sql_command sql_command_code() const override {
     return multitable ? SQLCOM_UPDATE_MULTI : SQLCOM_UPDATE;
@@ -174,8 +175,10 @@ class Sql_cmd_update final : public Sql_cmd_dml {
  public:
   /// The original list of fields to update, used for privilege checking
   mem_root_deque<Item *> original_fields;
-  /// The values used to update fields
+  /// The values used to update fields, i.e. list of right values of all SET clauses.
   mem_root_deque<Item *> *update_value_list;
+
+  mem_root_deque<Item *> returning_list; // list of items in returning clause
 };
 
 #endif /* SQL_UPDATE_INCLUDED */

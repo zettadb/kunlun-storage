@@ -1575,6 +1575,7 @@ void warn_about_deprecated_binary(THD *thd)
         fields_or_vars
         opt_field_or_var_spec
         row_value_explicit
+		opt_returning_clause returning_clause returning_item_list
 
 %type <var_type>
         option_type opt_var_type opt_var_ident_type opt_set_var_ident_type
@@ -10235,6 +10236,28 @@ locked_row_action:
         | NOWAIT_SYM { $$= Locked_row_action::NOWAIT; }
         ;
 
+returning_item_list:
+          returning_item_list ',' select_item
+          {
+            if ($1 == nullptr || $1->push_back($3))
+              MYSQL_YYABORT;
+            $$ = $1;
+          }
+        | select_item
+          {
+            $$ = NEW_PTN PT_returning_item_list;
+            if ($$ == nullptr || $1 == nullptr || $$->push_back($1))
+              MYSQL_YYABORT;
+          }
+        | '*'
+          {
+            Item *item = NEW_PTN Item_asterisk(@$, nullptr, nullptr);
+            $$ = NEW_PTN PT_returning_item_list;
+            if ($$ == nullptr || item == nullptr || $$->push_back(item))
+              MYSQL_YYABORT;
+          }
+        ;
+
 select_item_list:
           select_item_list ',' select_item
           {
@@ -10922,7 +10945,7 @@ opt_returning_type:
           {
             $$= {ITEM_CAST_CHAR, nullptr, "512", nullptr};
           }
-        | RETURNING_SYM cast_type
+          | RETURNING_SYM cast_type
           {
             $$= $2;
           }
@@ -13515,10 +13538,23 @@ update_stmt:
           opt_where_clause      /* #7 */
           opt_order_clause      /* #8 */
           opt_simple_limit      /* #9 */
+          opt_returning_clause
           {
             $$= NEW_PTN PT_update($1, $2, $3, $4, $5, $7.column_list, $7.value_list,
-                                  $8, $9, $10);
+                                  $8, $9, $10, $11);
           }
+        ;
+
+opt_returning_clause:
+         /* EMPTY */ { $$ = nullptr; }
+		| returning_clause { $$ = $1; }
+		;
+
+returning_clause:
+        RETURNING_SYM returning_item_list
+        {
+          $$ = $2;
+        }
         ;
 
 opt_with_clause:
@@ -13571,8 +13607,9 @@ delete_stmt:
           opt_where_clause
           opt_order_clause
           opt_simple_limit
+          opt_returning_clause
           {
-            $$= NEW_PTN PT_delete($1, $2, $3, $5, $6, $7, $8, $9, $10);
+            $$= NEW_PTN PT_delete($1, $2, $3, $5, $6, $7, $8, $9, $10, $11);
           }
         | opt_with_clause
           DELETE_SYM
@@ -13581,8 +13618,9 @@ delete_stmt:
           FROM
           table_reference_list
           opt_where_clause
+          opt_returning_clause
           {
-            $$= NEW_PTN PT_delete($1, $2, $3, $4, $6, $7);
+            $$= NEW_PTN PT_delete($1, $2, $3, $4, $6, $7, $8);
           }
         | opt_with_clause
           DELETE_SYM
@@ -13592,8 +13630,9 @@ delete_stmt:
           USING
           table_reference_list
           opt_where_clause
+          opt_returning_clause
           {
-            $$= NEW_PTN PT_delete($1, $2, $3, $5, $7, $8);
+            $$= NEW_PTN PT_delete($1, $2, $3, $5, $7, $8, $9);
           }
         ;
 
@@ -15635,7 +15674,6 @@ ident_keywords_unambiguous:
         | RESUME_SYM
         | RETAIN_SYM
         | RETURNED_SQLSTATE_SYM
-        | RETURNING_SYM
         | RETURNS_SYM
         | REUSE_SYM
         | REVERSE_SYM

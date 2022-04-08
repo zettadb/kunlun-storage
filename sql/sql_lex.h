@@ -1370,6 +1370,7 @@ class Query_block {
   /// Merge derived table into query block
   bool merge_derived(THD *thd, TABLE_LIST *derived_table);
 
+  bool setup_wild_in_returning(THD*);
   bool flatten_subqueries(THD *thd);
 
   /**
@@ -2307,7 +2308,13 @@ class Query_block {
 
   /// Condition to be evaluated on grouped rows after grouping.
   Item *m_having_cond;
-
+public:
+  /**
+    List of expressions to return in returning list, used by
+    UPDATE, DELETE statements.
+  */
+  mem_root_deque<Item*>returning_list;
+private:
   /// Number of GROUP BY expressions added to all_fields
   int hidden_group_field_count;
 
