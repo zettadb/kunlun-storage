@@ -4540,7 +4540,7 @@ apply_event_and_update_pos(Log_event **ptr_ev, THD *thd, Relay_log_info *rli) {
   /*
      Set the unmasked and actual server ids from the event
    */
-  thd->server_id = ev->server_id;  // use the original server id for logging
+  thd->server_id = ev->server_id;  // use the original server id(that of the master) for logging
   thd->unmasked_server_id = ev->common_header->unmasked_server_id;
   thd->set_time();  // time the query
   thd->lex->set_current_query_block(nullptr);
@@ -4847,6 +4847,7 @@ static bool coord_handle_partial_binlogged_transaction(Relay_log_info *rli,
   */
   mysql_mutex_assert_owner(&rli->data_lock);
   THD *thd = rli->info_thd;
+  std::string pos_info;
 
   if (!rli->curr_group_seen_begin) {
     DBUG_PRINT("info", ("Injecting QUERY(BEGIN) to rollback worker"));
@@ -5497,7 +5498,8 @@ extern "C" void *handle_slave_io(void *arg) {
       When using auto positioning, the slave IO thread will always start reading
       a transaction from the beginning of the transaction (transaction's first
       event). So, we have to reset the transaction boundary parser after
-      (re)connecting.
+      (re)connecting. This is the slave io thread's reconnection trick mentioned by
+      coord_handle_partial_binlogged_transaction.
       If not using auto positioning, the Relay_log_info::rli_init_info() took
       care of putting the mi->transaction_parser in the correct state when
       initializing Received_gtid_set from relay log during slave server starts,
@@ -5683,7 +5685,17 @@ extern "C" void *handle_slave_io(void *arg) {
           };);
         }
 #endif
-        QUEUE_EVENT_RESULT queue_res = queue_event(mi, event_buf, event_len);
+
+#ifndef NDEBUG
+        bool is_xa_end_event= false;
+#endif
+        QUEUE_EVENT_RESULT queue_res = queue_event(mi, event_buf, event_len, true
+#ifndef NDEBUG
+            ,&is_xa_end_event);
+#else
+);
+#endif
+
         if (queue_res == QUEUE_EVENT_ERROR_QUEUING) {
           mi->report(ERROR_LEVEL, ER_SLAVE_RELAY_LOG_WRITE_FAILURE,
                      ER_THD(thd, ER_SLAVE_RELAY_LOG_WRITE_FAILURE),
@@ -5766,6 +5778,7 @@ extern "C" void *handle_slave_io(void *arg) {
             "stop_io_after_reading_gtid_log_event",
             if (event_buf[EVENT_TYPE_OFFSET] == binary_log::GTID_LOG_EVENT)
                 thd->killed = THD::KILLED_NO_VALUE;);
+        // Use this one to stop IO thread after 'BEGIN' or 'XA START' events.
         DBUG_EXECUTE_IF(
             "stop_io_after_reading_query_log_event",
             if (event_buf[EVENT_TYPE_OFFSET] == binary_log::QUERY_EVENT)
@@ -5786,6 +5799,15 @@ extern "C" void *handle_slave_io(void *arg) {
             "stop_io_after_reading_write_rows_log_event",
             if (event_buf[EVENT_TYPE_OFFSET] == binary_log::WRITE_ROWS_EVENT)
                 thd->killed = THD::KILLED_NO_VALUE;);
+        // Use this to stop IO thread after queuing XA END event.
+        DBUG_EXECUTE_IF("stop_io_after_xa_end_event",
+          if (is_xa_end_event)
+            thd->killed= THD::KILLED_NO_VALUE;
+        );
+        DBUG_EXECUTE_IF("stop_io_after_reading_xa_prepare_log_event",
+          if (event_buf[EVENT_TYPE_OFFSET] == binary_log::XA_PREPARE_LOG_EVENT)
+            thd->killed= THD::KILLED_NO_VALUE;
+        );
         DBUG_EXECUTE_IF(
             "stop_io_after_reading_unknown_event",
             /*
@@ -7555,7 +7577,7 @@ static int process_io_rotate(Master_info *mi, Rotate_log_event *rev) {
   @todo Make this a member of Master_info.
 */
 QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
-                               ulong event_len, bool do_flush_mi) {
+                               ulong event_len, bool do_flush_mi, bool *is_xa_end) {
   QUEUE_EVENT_RESULT res = QUEUE_EVENT_OK;
   ulong inc_pos = 0;
   Relay_log_info *rli = mi->rli;
@@ -8186,6 +8208,14 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
         ("master_log_pos: %lu, event originating from %u server, ignored",
          (ulong)mi->get_master_log_pos(), uint4korr(buf + SERVER_ID_OFFSET)));
   } else {
+#ifndef NDEBUG
+    if (is_xa_end && event_type == binary_log::QUERY_EVENT)
+    {
+      Query_log_event qe(buf, mi->get_mi_description_event(), event_type);
+      *is_xa_end= !strncasecmp(qe.query, STRING_WITH_LEN("XA END"));
+    }
+#endif
+
     bool is_error = false;
     /* write the event to the relay log */
     if (likely(rli->relay_log.write_buffer(

@@ -603,6 +603,7 @@ SET(SQL_SHARED_SOURCES
   uniques.cc
   window_iterators.cc
   xa.cc
+  xa_utils.cc
   daemon_proxy_keyring/daemon_proxy_keyring.cc
 )
 
@@ -967,6 +968,7 @@ SET(BINLOG_SOURCE
   rpl_utility.cc
   sql_binlog.cc
   stream_cipher.cc
+  xa_utils.cc
   )
 ADD_LIBRARY(binlog STATIC ${BINLOG_SOURCE})
 TARGET_LINK_LIBRARIES(binlog binlogevents_static)

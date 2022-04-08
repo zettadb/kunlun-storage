@@ -906,7 +906,6 @@ void THD::init(void) {
   */
   m_disable_password_validation = false;
 
-  usecs_in_q = 0;
   m_global_conn_id = 0;
   real_tid=0;
   real_id= 0;
@@ -984,7 +983,6 @@ void THD::cleanup_connection(void) {
   }
   /* DEBUG code only (end) */
 #endif
-  usecs_in_q = 0;
   m_global_conn_id = 0;
   real_tid=0;
   real_id= 0;

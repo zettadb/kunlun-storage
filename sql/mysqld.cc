@@ -1125,6 +1125,7 @@ static bool socket_listener_active = false;
 static int pipe_write_fd = -1;
 static bool opt_daemonize = false;
 #endif
+int g_did_binlog_recovery = 0;
 bool opt_debugging = false;
 static bool opt_external_locking = false, opt_console = false;
 static bool opt_short_log_format = false;
@@ -6691,12 +6692,13 @@ static int init_server_components() {
     unireg_abort(MYSQLD_ABORT_EXIT);
   }
 
+  // dzw: Do binlog recovery.
   if (tc_log->open(opt_bin_log ? opt_bin_logname : opt_tc_log_file)) {
     LogErr(ERROR_LEVEL, ER_CANT_INIT_TC_LOG);
     unireg_abort(MYSQLD_ABORT_EXIT);
   }
   (void)RUN_HOOK(server_state, before_recovery, (nullptr));
-  if (ha_recover(nullptr)) {
+  if (!g_did_binlog_recovery && ha_recover(nullptr)) {
     unireg_abort(MYSQLD_ABORT_EXIT);
   }
 
@@ -7660,8 +7662,12 @@ int mysqld_main(int argc, char **argv)
       log. This requires some investigation.
 
       /Alfranio
+
+      Also the XA PREPARED TXNIDS are stored to the prev-gtids-list event.
     */
-    Previous_gtids_log_event prev_gtids_ev(&gtids_in_binlog);
+    std::string xa_prepared_query;
+    prepared_xa_txnids.serialize(xa_prepared_query);
+    Previous_gtids_log_event prev_gtids_ev(&gtids_in_binlog, &xa_prepared_query);
 
     global_sid_lock->unlock();
 

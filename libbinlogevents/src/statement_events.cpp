@@ -43,7 +43,14 @@ Query_event::Query_event(Log_event_type type_arg)
       host(nullptr),
       host_len(0),
       db_len(0),
-      q_len(0) {}
+      q_len(0) {
+
+  default_collation_for_utf8mb4_number = 0;
+  explicit_defaults_ts = TERNARY_UNSET;
+  ddl_xid = INVALID_XID;
+  sql_require_primary_key = 0xff;
+  default_table_encryption = 0xff;
+}
 
 /**
   The constructor used by MySQL master to create a query event, to be

@@ -11418,6 +11418,10 @@ ER_PREPARE_FOR_PRIMARY_ENGINE
 # End of 8.0 error messages intended to be written to the server error log.
 #
 
+# Kunlun-storage error log messages.
+start-error-number 45000
+ER_BINLOG_MALFORMED_OR_OLD
+  eng "Binlog file is malformed or old because its PREV_GTID_LIST event doesn't contain the prepared XA transaction IDs."
 #
 # Start of Percona Server 8.0 server error log messages
 #

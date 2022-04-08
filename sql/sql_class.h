@@ -1488,7 +1488,6 @@ class THD : public MDL_context_owner,
   const char *proc_info(const System_variables &sysvars) const;
 
   uint32 m_global_conn_id; // dzw: global connection id given by computing node.
-  ulonglong usecs_in_q; // dzw: NO. of usecs waiting in thread pool's queue.
 
  public:
   // See comment in THD::enter_cond about why SUPPRESS_TSAN is needed.

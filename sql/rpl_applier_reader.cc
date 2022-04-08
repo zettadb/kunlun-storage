@@ -227,11 +227,13 @@ Log_event *Rpl_applier_reader::read_next_event() {
   }
 
   m_rli->set_event_start_pos(m_relaylog_file_reader.position());
-  ev = m_relaylog_file_reader.read_event_object();
-  if (ev != nullptr) {
-    m_rli->set_future_event_relay_log_pos(m_relaylog_file_reader.position());
-    ev->future_event_relay_log_pos = m_rli->get_future_event_relay_log_pos();
-    return ev;
+  while (true) {
+    ev = m_relaylog_file_reader.read_event_object();
+    if (ev != nullptr) {
+      m_rli->set_future_event_relay_log_pos(m_relaylog_file_reader.position());
+      ev->future_event_relay_log_pos = m_rli->get_future_event_relay_log_pos();
+      return ev;
+    } else break;
   }
 
   if (m_relaylog_file_reader.get_error_type() == Binlog_read_error::READ_EOF &&

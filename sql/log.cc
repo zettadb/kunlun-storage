@@ -787,6 +787,7 @@ bool File_query_log::write_slow(THD *thd, ulonglong current_utime,
             "# Query_time: %s  Lock_time: %s"
             " Rows_sent: %lu  Rows_examined: %lu"
             " Thread_id: %lu Errno: %lu Killed: %lu"
+			" Global_conn_id: %u OS_Thread_ID: %d"
             " Bytes_received: %lu Bytes_sent: %lu"
             " Read_first: %lu Read_last: %lu Read_key: %lu"
             " Read_next: %lu Read_prev: %lu"
@@ -801,6 +802,8 @@ bool File_query_log::write_slow(THD *thd, ulonglong current_utime,
             static_cast<ulong>(
                 thd->is_error() ? thd->get_stmt_da()->mysql_errno() : 0),
             (ulong)thd->killed,
+			thd->get_global_connection_id(),
+			thd->real_thread_tid(),
             (ulong)(thd->status_var.bytes_received -
                     query_start->bytes_received),
             (ulong)(thd->status_var.bytes_sent - query_start->bytes_sent),

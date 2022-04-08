@@ -537,7 +537,8 @@ typedef enum {
   QUEUE_EVENT_ERROR_FLUSHING_INFO
 } QUEUE_EVENT_RESULT;
 QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
-                               ulong event_len, bool flush_mi = true);
+                               ulong event_len, bool flush_mi = true,
+                               bool *is_xa_end_event = nullptr);
 
 extern "C" void *handle_slave_io(void *arg);
 extern "C" void *handle_slave_sql(void *arg);

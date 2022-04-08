@@ -7878,7 +7878,6 @@ static Sys_var_int32 Sys_print_extra_info(
     VALID_RANGE(0, 100000), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0), DEPRECATED_VAR(""));
 
-extern int ddc_mode;
 static Sys_var_int32 Sys_ddc_mode(
     "ddc_mode",
     "ddc mode",
@@ -7886,3 +7885,14 @@ static Sys_var_int32 Sys_ddc_mode(
     CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(0, 1000), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0), DEPRECATED_VAR(""));
+
+#ifndef NDEBUG
+extern int64_t multi_purpose_int;
+static Sys_var_long Sys_multi_purpose_int(
+       "multi_purpose_int",
+       "Multiple purpose integer to be used only at test",
+       GLOBAL_VAR(multi_purpose_int),
+       CMD_LINE(OPT_ARG),
+       VALID_RANGE(INT64_MIN, INT64_MAX), DEFAULT(0), BLOCK_SIZE(1),
+       NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+#endif

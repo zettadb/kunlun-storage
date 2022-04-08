@@ -3159,19 +3159,17 @@ static bool get_info_about_prepared_transaction(XA_recover_txn *txn_list,
 
 /** This function is used to find number of prepared transactions and
  their transaction objects for a recovery.
- @return number of prepared transactions stored in xid_list */
+ @return number of prepared transactions stored in txn_list */
 int trx_recover_for_mysql(
-    XA_recover_txn *txn_list, /*!< in/out: prepared transactions */
-    ulint len,                /*!< in: number of slots in xid_list */
+    XA_recover_txn_list *txn_list, /*!< in/out: prepared transactions */
     MEM_ROOT *mem_root)       /*!< in: memory for table names */
 {
   ulint count = 0;
 
   ut_ad(txn_list);
-  ut_ad(len);
 
   /* We should set those transactions which are in the prepared state
-  to the xid_list */
+  to the txn_list */
 
   trx_sys_mutex_enter();
 
@@ -3183,12 +3181,13 @@ int trx_recover_for_mysql(
     trx_sys->mutex. It may change to PREPARED, but not if
     trx->is_recovered. */
     if (trx_state_eq(trx, TRX_STATE_PREPARED)) {
-      if (get_info_about_prepared_transaction(&txn_list[count], trx, mem_root))
+      XA_recover_txn xrt;
+      if (get_info_about_prepared_transaction(&xrt, trx, mem_root))
         break;
-
+      txn_list->push_back(xrt);
       if (count == 0) {
         ib::info(ER_IB_MSG_1207) << "Starting recovery for"
-                                    " XA transactions...";
+                                    " XA transactions in Innodb...";
       }
 
       ib::info(ER_IB_MSG_1208) << "Transaction " << trx_get_id_for_print(trx)
@@ -3199,9 +3198,6 @@ int trx_recover_for_mysql(
 
       count++;
 
-      if (count == len) {
-        break;
-      }
     }
   }
 
@@ -3210,7 +3206,7 @@ int trx_recover_for_mysql(
   if (count > 0) {
     ib::info(ER_IB_MSG_1210) << count
                              << " transactions in prepared state"
-                                " after recovery";
+                                " after recovery in Innodb";
   }
 
   return (int(count));

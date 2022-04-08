@@ -71,6 +71,7 @@
 #include "sql/sql_const.h"       // SHOW_COMP_OPTION
 #include "sql/sql_list.h"        // SQL_I_List
 #include "sql/sql_plugin_ref.h"  // plugin_ref
+#include "sql/xa.h"
 #include "thr_lock.h"            // thr_lock_type
 #include "typelib.h"
 
@@ -1294,7 +1295,7 @@ typedef int (*clone_consistent_snapshot_t)(handlerton *hton, THD *thd,
 
 typedef int (*store_binlog_info_t)(handlerton *hton, THD *thd);
 
-typedef int (*recover_t)(handlerton *hton, XA_recover_txn *xid_list, uint len,
+typedef int (*recover_t)(handlerton *hton, XA_recover_txn_list *txn_list,
                          MEM_ROOT *mem_root);
 
 /** X/Open XA distributed transaction status codes */
@@ -7252,7 +7253,12 @@ int ha_xa_prepare(THD *thd);
 */
 
 typedef ulonglong my_xid;  // this line is the same as in log_event.h
-int ha_recover(const mem_root_unordered_set<my_xid> *commit_list);
+int ha_recover(const mem_root_unordered_set<my_xid> *commit_list,
+               const std::set<std::string> *xa_prepared=nullptr,
+               const std::set<std::string> *xa_cop =nullptr,
+               const std::set<std::string> *xa_committed =nullptr,
+               const std::set<std::string> *xa_aborted =nullptr,
+               std::set<std::string> *engine_prepared =nullptr);
 
 /**
   Perform SE-specific cleanup after recovery of transactions.

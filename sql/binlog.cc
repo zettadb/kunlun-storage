@@ -168,6 +168,8 @@ const char *log_bin_basename = nullptr;
 /* Size for IO_CACHE buffer for binlog & relay log */
 ulong rpl_read_size;
 
+int64_t multi_purpose_int = 0;
+int fetch_xa_prepared();
 MYSQL_BIN_LOG mysql_bin_log(&sync_binlog_period);
 
 static int binlog_init(void *p);
@@ -184,7 +186,7 @@ static xa_status_code binlog_xa_commit(handlerton *hton, XID *xid);
 static xa_status_code binlog_xa_rollback(handlerton *hton, XID *xid);
 static void exec_binlog_error_action_abort(const char *err_string);
 static bool binlog_recover(Binlog_file_reader *binlog_file_reader,
-                           my_off_t *valid_pos);
+                           my_off_t *valid_pos, bool skip_recovery);
 static void binlog_prepare_row_images(const THD *thd, TABLE *table);
 static bool is_loggable_xa_prepare(THD *thd);
 
@@ -637,8 +639,8 @@ class binlog_cache_data {
   bool has_incident(void) const { return flags.incident; }
 
   bool has_xid() const {
-    // There should only be an XID event if we are transactional
-    assert((flags.transactional && flags.with_xid) || !flags.with_xid);
+    // There should only be an XID event if we are transactional -- XA COMMIT is a single stmt
+    // assert((flags.transactional && flags.with_xid) || !flags.with_xid);
     return flags.with_xid;
   }
 
@@ -1114,7 +1116,10 @@ class binlog_cache_mngr {
   int flush(THD *thd, my_off_t *bytes_written, bool *wrote_xid) {
     my_off_t stmt_bytes = 0;
     my_off_t trx_bytes = 0;
-    assert(stmt_cache.has_xid() == 0);
+    /*
+     * dzw: XA COMMIT sets with_xid bit.
+     * assert(stmt_cache.has_xid() == 0);
+     */
     int error = stmt_cache.flush(thd, &stmt_bytes, wrote_xid);
     if (error) return error;
     DEBUG_SYNC(thd, "after_flush_stm_cache_before_flush_trx_cache");
@@ -1262,7 +1267,7 @@ static void binlog_trans_log_savepos(THD *thd, my_off_t *pos) {
   cache_mngr->trx_cache.cache_state_checkpoint(*pos);
 }
 
-static int binlog_dummy_recover(handlerton *, XA_recover_txn *, uint,
+static int binlog_dummy_recover(handlerton *, XA_recover_txn_list *,
                                 MEM_ROOT *) {
   return 0;
 }
@@ -1455,6 +1460,12 @@ int binlog_cache_data::write_event(Log_event *ev) {
       return 1;
     }
     if (ev->get_type_code() == binary_log::XID_EVENT) flags.with_xid = true;
+    if (ev->get_type_code() == binary_log::XA_PREPARE_LOG_EVENT &&
+        ((XA_prepare_log_event *)ev)->is_one_phase())
+      flags.with_xid = true;
+    if (ev->get_type_code() == binary_log::QUERY_EVENT &&
+        ((Query_log_event *)ev)->is_query_prefix_match(STRING_WITH_LEN("XA COMMIT")))
+      flags.with_xid = true;
     if (ev->is_using_immediate_logging()) flags.immediate = true;
     /* DDL gets marked as xid-requiring at its caching. */
     if (is_atomic_ddl_event(ev)) flags.with_xid = true;
@@ -4915,6 +4926,9 @@ bool MYSQL_BIN_LOG::open_binlog(
   DBUG_EXECUTE_IF("crash_create_non_critical_before_update_index",
                   DBUG_SUICIDE(););
 
+  // Use a more descriptive probe name
+  DBUG_EXECUTE_IF("crash_rotate_after_entering_index_file_before_binlog_file_creation",
+                  DBUG_SUICIDE(););
   write_error = false;
 
   /* open the main log file */
@@ -4946,6 +4960,8 @@ bool MYSQL_BIN_LOG::open_binlog(
       goto err;
     bytes_written += BIN_LOG_HEADER_SIZE;
     write_file_name_to_index_file = true;
+	DBUG_EXECUTE_IF("crash_rotate_after_binlog_header_written_before_writing_fde",
+					DBUG_SUICIDE(););
   }
 
   /*
@@ -4984,6 +5000,8 @@ bool MYSQL_BIN_LOG::open_binlog(
     Gtid_set logged_gtids_binlog(global_sid_map, global_sid_lock);
     Gtid_set *previous_logged_gtids;
 
+    DBUG_EXECUTE_IF("crash_rotate_after_fde_written_before_prev_gtids",
+                    DBUG_SUICIDE(););
     if (is_relay_log) {
       previous_logged_gtids = previous_gtid_set_relaylog;
       sid_lock = previous_gtid_set_relaylog->get_sid_map()->get_sid_lock();
@@ -5011,10 +5029,24 @@ bool MYSQL_BIN_LOG::open_binlog(
     }
     DBUG_PRINT("info", ("Generating PREVIOUS_GTIDS for %s file.",
                         is_relay_log ? "relaylog" : "binlog"));
-    Previous_gtids_log_event prev_gtids_ev(previous_logged_gtids);
+    std::string *p_xa_prepared_query = nullptr;
+    std::string xa_prepared_query;
+    if (!is_relay_log)
+    {
+      /*
+        Write xa prepared txnids as a string right here. This branch is
+        executed when a new binlog file is generated(old rotated) during mysqld
+        runtime.
+      */
+      prepared_xa_txnids.serialize(xa_prepared_query);
+      p_xa_prepared_query = &xa_prepared_query;
+    }
+
+    Previous_gtids_log_event prev_gtids_ev(previous_logged_gtids, p_xa_prepared_query);
     if (is_relay_log) prev_gtids_ev.set_relay_log_event();
     if (need_sid_lock) sid_lock->unlock();
     if (write_event_to_binlog(&prev_gtids_ev)) goto err;
+    DBUG_EXECUTE_IF("crash_rotate_after_prev_gtids_written", DBUG_SUICIDE(););
   } else  // !(current_thd)
   {
     /*
@@ -5931,6 +5963,51 @@ err:
   return LOG_INFO_IO;
 }
 
+
+int MYSQL_BIN_LOG::
+overwrite_index_file(const std::vector<std::string> &log_ents)
+{
+  if (open_crash_safe_index_file())
+  {
+    sql_print_error("MYSQL_BIN_LOG::overwrite_index_file failed to "
+                    "open the crash safe index file.");
+    goto err;
+  }
+
+  for (size_t i= 0; i < log_ents.size(); i++)
+  {
+    if (my_b_write(&crash_safe_index_file,
+        pointer_cast<const uchar *>(log_ents[i].c_str()), log_ents[i].length()) ||
+        my_b_write(&crash_safe_index_file, pointer_cast<const uchar *>("\n"), 1))
+    {
+      sql_print_error("MYSQL_BIN_LOG::overwrite_index_file failed to "
+                      "append log file name: %s, to crash "
+                      "safe index file.", log_ents[i].c_str());
+      goto err; 
+    }
+  }
+
+  if (close_crash_safe_index_file())
+  {
+    sql_print_error("MYSQL_BIN_LOG::overwrite_index_file failed to "
+                    "close the crash safe index file.");
+    goto err;
+  }
+
+  if (move_crash_safe_index_file_to_index_file(true/*need_lock_index=true*/))
+  {
+    sql_print_error("MYSQL_BIN_LOG::overwrite_index_file failed to "
+                    "move crash safe index file to index file.");
+    goto err;
+  }
+
+  return 0;
+
+err:
+  return LOG_INFO_IO;
+}
+
+
 /**
   Remove all logs before the given log from disk and from the index file.
 
@@ -6703,6 +6780,7 @@ int MYSQL_BIN_LOG::new_file_impl(
   DBUG_EXECUTE_IF("semi_sync_3-way_deadlock",
                   DEBUG_SYNC(current_thd, "before_rotate_binlog"););
   mysql_mutex_lock(&LOCK_xids);
+
   /*
     We need to ensure that the number of prepared XIDs are 0.
 
@@ -6711,9 +6789,11 @@ int MYSQL_BIN_LOG::new_file_impl(
     - We keep the LOCK_log to block new transactions from being
       written to the binary log.
    */
+  DBUG_EXECUTE_IF("count_trx_commit_waits_at_rotation", {multi_purpose_int = get_prep_xids();});
   while (get_prep_xids() > 0) {
     mysql_cond_wait(&m_prep_xids_cond, &LOCK_xids);
   }
+
   mysql_mutex_unlock(&LOCK_xids);
 
   mysql_mutex_lock(&LOCK_index);
@@ -7720,8 +7800,9 @@ inline bool MYSQL_BIN_LOG::write_event_to_binlog(Log_event *ev) {
 
 /* Write the event into current binlog and flush and sync */
 bool MYSQL_BIN_LOG::write_event_to_binlog_and_sync(Log_event *ev) {
-  if (write_event_to_binlog(ev) || m_binlog_file->flush() ||
-      m_binlog_file->sync())
+  if (write_event_to_binlog(ev))
+    return true; 
+  if (m_binlog_file->flush() || m_binlog_file->sync())
     return true;
 
   update_binlog_end_pos();
@@ -7979,6 +8060,79 @@ void MYSQL_BIN_LOG::set_max_size(ulong max_size_arg) {
 
 /****** transaction coordinator log for 2pc - binlog() based solution ******/
 
+/*
+
+  @param old_binlog[out] *old_binlog set to 1 if the binlog is old format;
+                                            0 if new format;
+                                          -1 if unknown(unable to conclude).
+  @retval true if log_name contains 'XA-PREPARED-LIST', false otherwise.
+*/
+static bool
+binlog_file_starts_fully(const char *log_name, int *err, int *old_binlog)
+{
+  int error= 0;
+  Log_event  *ev=0;
+  bool ret= false;
+  bool seen_pgl= false, seen_xpl= false;
+
+  *old_binlog= -1;
+
+  Binlog_file_reader binlog_file_reader(opt_source_verify_checksum);
+  if (binlog_file_reader.open(log_name)) {
+    error= 1;
+    LogErr(ERROR_LEVEL, ER_BINLOG_FILE_OPEN_FAILED,
+           binlog_file_reader.get_error_str());
+    goto err;
+  }
+
+  while ((ev = binlog_file_reader.read_event_object()) && ev->is_valid())
+  {
+    // verify that the target binlog has XA-PREPARED-LIST in prev-gtids event.
+    if (ev->get_type_code() == binary_log::PREVIOUS_GTIDS_LOG_EVENT)
+    {
+      seen_pgl= true;
+      Previous_gtids_log_event *pgl = ((Previous_gtids_log_event*)ev);
+      if (pgl->old_official_format() == false)
+      {
+        *old_binlog= 0;
+        seen_xpl= true;
+      }
+      else
+      {
+        /*
+          If the PREV-GTIDS event dosn't contain XA_PREPARED_LIST, then this
+          binlog is of old format, but it nonetheless is a valid binlog that
+          started fully.
+        */
+        *old_binlog= 1;
+      }
+      delete ev;
+      ret= true;
+      break;
+    }
+    delete ev;
+  }
+
+  /*
+    XA_PREPARED_LIST is always written together with PREV-GTIDS now, so without
+    a XPL, the binlog is an old one.
+  */
+  if (seen_pgl && !seen_xpl)
+  {
+    ret= true;
+    *old_binlog= 1;
+  }
+
+  /*
+    Being unknown whether it's old binlog if and only if it not starts fully.
+  */
+  assert((ret && *old_binlog != -1) || (!ret && *old_binlog == -1));
+err:
+  *err= error;
+  return ret;
+}
+
+
 /**
   @todo
   keep in-memory list of prepared transactions
@@ -8029,9 +8183,13 @@ int MYSQL_BIN_LOG::open_binlog(const char *opt_name) {
     char log_name[FN_REFLEN];
     my_off_t valid_pos = 0;
     my_off_t binlog_size = 0;
+    std::vector<std::string> binlog_fns;
+    bool last_binlog_invalid= false;
+    int old_binlog= 0;
 
     do {
       strmake(log_name, log_info.log_file_name, sizeof(log_name) - 1);
+      binlog_fns.push_back(log_info.log_file_name);
     } while (
         !(error = find_next_log(&log_info, true /*need_lock_index=true*/)));
 
@@ -8040,6 +8198,42 @@ int MYSQL_BIN_LOG::open_binlog(const char *opt_name) {
       goto err;
     }
 
+    assert(!binlog_fns.empty());
+
+    if (!binlog_fns.empty() &&
+        !binlog_file_starts_fully(binlog_fns.back().c_str(), &error, &old_binlog))
+    {
+      /*
+        Here we assume a binlog file that did not start fully, is always the
+        last binlog file. This is reasonable.
+      */
+      binlog_fns.pop_back();
+      if ((error= overwrite_index_file(binlog_fns)))
+        goto err;
+      if (!binlog_fns.empty())
+      {
+        const char *new_last_binlogfile = binlog_fns.back().c_str();
+        if (!binlog_file_starts_fully(binlog_fns.back().c_str(), &error, &old_binlog))
+        {
+          sql_print_error("Fatal error: binlog file %s right before last invalid binlog %s is found invalid too, it must be valid.",
+              new_last_binlogfile, log_name);
+          goto err;
+        }
+        assert(old_binlog != -1);
+        strmake(log_name, binlog_fns.back().c_str(), sizeof(log_name)-1);
+      }
+      else
+      {
+        /*
+          We have only 1 binlog file which was not started fully, unable to
+          do recovery, need human intervention.
+        */
+        error= LOG_INFO_INVALID;
+        goto err;
+      }
+
+      last_binlog_invalid= true;
+    }
     Binlog_file_reader binlog_file_reader(opt_source_verify_checksum);
     if (binlog_file_reader.open(log_name)) {
       LogErr(ERROR_LEVEL, ER_BINLOG_FILE_OPEN_FAILED,
@@ -8063,12 +8257,33 @@ int MYSQL_BIN_LOG::open_binlog(const char *opt_name) {
     */
     if ((ev = binlog_file_reader.read_event_object()) &&
         ev->get_type_code() == binary_log::FORMAT_DESCRIPTION_EVENT &&
-        (ev->common_header->flags & LOG_EVENT_BINLOG_IN_USE_F ||
+        ((ev->common_header->flags & LOG_EVENT_BINLOG_IN_USE_F) ||
+         last_binlog_invalid ||// Only to populate prepared_xa_txnids. engine
          DBUG_EVALUATE_IF("eval_force_bin_log_recovery", true, false))) {
       LogErr(INFORMATION_LEVEL, ER_BINLOG_RECOVERING_AFTER_CRASH_USING,
              opt_name);
       valid_pos = binlog_file_reader.position();
-      error = binlog_recover(&binlog_file_reader, &valid_pos);
+
+      assert(Recovered_xa_transactions::instance().num_entries() == 0);
+
+      bool skip_recovery=
+        (!(ev->common_header->flags & LOG_EVENT_BINLOG_IN_USE_F) &&
+         last_binlog_invalid && old_binlog == 1);
+      if (old_binlog == 1) {
+		LogErr(ERROR_LEVEL, ER_BINLOG_MALFORMED_OR_OLD);
+	  }
+      else {
+        sql_print_information("Binlog recovery: scanning binlog %s", log_name);
+        error = binlog_recover(&binlog_file_reader, &valid_pos,
+							   false/*must always do recovery*/);
+      }
+
+      /*
+        If last binlog is not crashed, no need to trim invalid tail below, and
+        valid_pos in this case is not incremented given old binlog.
+      */
+      if (skip_recovery)
+        valid_pos= 0;
       binlog_size = binlog_file_reader.ifile()->length();
     } else
       error = 0;
@@ -8533,7 +8748,8 @@ std::pair<int, my_off_t> MYSQL_BIN_LOG::flush_thread_caches(THD *thd) {
       this function documentation for more info.
     */
     thd->set_trans_pos(log_file_name, m_binlog_file->position());
-    if (wrote_xid) inc_prep_xids(thd);
+    if (wrote_xid)
+      inc_prep_xids(thd);
   }
   DBUG_PRINT("debug", ("bytes: %llu", bytes));
   return std::make_pair(error, bytes);
@@ -8677,6 +8893,8 @@ void MYSQL_BIN_LOG::process_commit_stage_queue(THD *thd, THD *first) {
   thd->get_transaction()->m_flags.ready_preempt =
       true;  // formality by the leader
 #endif
+  DBUG_EXECUTE_IF("crash_before_engine_commit", DBUG_SUICIDE(););
+
   for (THD *head = first; head; head = head->next_to_commit) {
     DBUG_PRINT("debug", ("Thread ID: %u, commit_error: %d, commit_pending: %s",
                          head->thread_id(), head->commit_error,
@@ -8726,6 +8944,7 @@ void MYSQL_BIN_LOG::process_commit_stage_queue(THD *thd, THD *first) {
     gtid_executed table is kept updated even though transactions fail to be
     logged. That's required by slave auto positioning.
   */
+  DBUG_EXECUTE_IF("wait_before_updating_executed_gtids", {sleep(10);} );
   gtid_state->update_commit_group(first);
 
   for (THD *head = first; head; head = head->next_to_commit) {
@@ -9123,6 +9342,8 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     flush_error = flush_cache_to_file(&flush_end_pos);
   DBUG_EXECUTE_IF("crash_after_flush_binlog", DBUG_SUICIDE(););
 
+  DEBUG_SYNC(thd, "bgc_after_flush_binlogs_before_updating_pos");
+
   update_binlog_end_pos_after_sync = (get_sync_period() == 1);
 
   /*
@@ -9372,7 +9593,7 @@ commit_stage:
   @retval true Out of memory, or storage engine returns error.
 */
 static bool binlog_recover(Binlog_file_reader *binlog_file_reader,
-                           my_off_t *valid_pos) {
+                           my_off_t *valid_pos, bool skip_recovery) {
   bool res = false;
   binlog::tools::Iterator it(binlog_file_reader);
   it.set_copy_event_buffer();
@@ -9386,7 +9607,7 @@ static bool binlog_recover(Binlog_file_reader *binlog_file_reader,
   {
     MEM_ROOT mem_root(key_memory_binlog_recover_exec, memory_page_size);
     mem_root_unordered_set<my_xid> xids(&mem_root);
-
+    std::set<std::string> xa_prepared, xa_cop, xa_committed, xa_aborted, engine_prepared;
     /*
       now process events in the queue. Queue is dynamically changed
       everytime we process an event. This may be a bit suboptimal
@@ -9399,13 +9620,36 @@ static bool binlog_recover(Binlog_file_reader *binlog_file_reader,
         // may be begin, middle or end of a transaction
         case binary_log::QUERY_EVENT: {
           // starts a transaction
-          if (!strcmp(((Query_log_event *)ev)->query, "BEGIN"))
+          if (!strncasecmp(((Query_log_event*)ev)->query, "BEGIN", 5) ||
+              !strncasecmp(((Query_log_event*)ev)->query, "XA START", 8))
             in_transaction = true;
 
           // ends a transaction
           if (!strcmp(((Query_log_event *)ev)->query, "COMMIT")) {
             assert(in_transaction == true);
             in_transaction = false;
+          }
+
+          /*
+            XA COMMIT/XA ROLLBACK is an independent separate event group which
+            doesn't have a begin/xa start head, so here we can ignore
+            XA COMMIT/XA ROLLBACK.
+          */
+          else if (!strncasecmp(((Query_log_event*)ev)->query, "XA COMMIT", 9))
+          {
+            assert(!in_transaction);
+            XID xid;
+			const char *qstr = ((Query_log_event*)ev)->query;
+            xid.deserialize(qstr + 10);
+            xa_committed.insert(std::string(xid.get_data(), xid.get_gtrid_length()));
+          }
+          else if (!strncasecmp(((Query_log_event*)ev)->query, "XA ROLLBACK", 11))
+          {
+            assert(!in_transaction);
+            XID xid;
+			const char *qstr = ((Query_log_event*)ev)->query;
+            xid.deserialize(qstr + 12);
+            xa_aborted.insert(std::string(xid.get_data(), xid.get_gtrid_length()));
           }
           // starts and ends a transaction
           if (is_atomic_ddl_event(ev)) {
@@ -9424,6 +9668,28 @@ static bool binlog_recover(Binlog_file_reader *binlog_file_reader,
           assert(xev != nullptr);
           res = (xev == nullptr || !xids.insert(xev->xid).second);
           break;
+        }
+        case binary_log::PREVIOUS_GTIDS_LOG_EVENT: {
+          if (((Previous_gtids_log_event*)ev)->get_xa_prepared_txnids())
+            res = Prepared_xa_txnids::parse(((Previous_gtids_log_event*)ev)->
+				get_xa_prepared_txnids(), xa_prepared);
+          break;
+        }
+        case binary_log::XA_PREPARE_LOG_EVENT: {
+          assert(in_transaction == true);
+          in_transaction= false;// we are out of the binlog event group.
+          // one phase commits use XA PREPARE event as end, but they are not
+          // prepared but committed.
+          XA_prepare_log_event *xev=(XA_prepare_log_event *)ev;
+          std::string xidstr= xev->get_xid_str();
+          if (!xev->is_one_phase())
+          {
+            xa_prepared.insert(xidstr);
+          }
+          else
+          {
+            xa_cop.insert(xidstr);
+          }
         }
         default: {
           break;
@@ -9480,11 +9746,27 @@ static bool binlog_recover(Binlog_file_reader *binlog_file_reader,
       ha_recover returns right away if total_ha_2pc <= opt_log_bin.)
      */
     res = res || (total_ha_2pc > 1 && ha_recover(&xids));
+    if (res == false && !skip_recovery && total_ha_2pc > 1)
+      res = ha_recover(&xids, &xa_prepared, &xa_cop,
+                   &xa_committed, &xa_aborted, &engine_prepared);
+    if (res) goto err;
+   
+    /*
+      Those prepared xa txnids that are not committed/aborted should be put into
+      prepared_xa_txnids.
+    */
+    if (skip_recovery)
+      prepared_xa_txnids.from_recovery(xa_prepared, xa_committed, xa_aborted);
+    else
+      prepared_xa_txnids.from_recovery(engine_prepared);
   }
-
+err:
   if (res) LogErr(ERROR_LEVEL, ER_BINLOG_CRASH_RECOVERY_FAILED);
   return res;
 }
+
+
+
 
 /*
   Copy out the non-directory part of binlog position filename for the

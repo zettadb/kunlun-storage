@@ -214,8 +214,7 @@ dberr_t trx_prepare_for_mysql(trx_t *trx);
  their transaction objects for a recovery.
  @return number of prepared transactions */
 int trx_recover_for_mysql(
-    XA_recover_txn *txn_list, /*!< in/out: prepared transactions */
-    ulint len,                /*!< in: number of slots in xid_list */
+    XA_recover_txn_list *txn_list, /*!< in/out: prepared transactions */
     MEM_ROOT *mem_root);      /*!< in: memory for table names */
 
 /** This function is used to find one X/Open XA distributed transaction

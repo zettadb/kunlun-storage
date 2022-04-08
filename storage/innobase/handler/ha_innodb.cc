@@ -1663,8 +1663,7 @@ static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
  @return number of prepared transactions stored in xid_list */
 static int innobase_xa_recover(
     handlerton *hton,         /*!< in: InnoDB handlerton */
-    XA_recover_txn *txn_list, /*!< in/out: prepared transactions */
-    uint len,                 /*!< in: number of slots in xid_list */
+    XA_recover_txn_list *txn_list, /*!< in/out: prepared transactions */
     MEM_ROOT *mem_root);      /*!< in: memory for table names */
 /** This function is used to commit one X/Open XA distributed transaction
  which is in the prepared state
@@ -21011,17 +21010,16 @@ static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
  @return number of prepared transactions stored in xid_list */
 static int innobase_xa_recover(
     handlerton *hton,         /*!< in: InnoDB handlerton */
-    XA_recover_txn *txn_list, /*!< in/out: prepared transactions */
-    uint len,                 /*!< in: number of slots in xid_list */
+    XA_recover_txn_list *txn_list, /*!< in/out: prepared transactions */
     MEM_ROOT *mem_root)       /*!< in: memory for table names */
 {
   assert(hton == innodb_hton_ptr);
 
-  if (len == 0 || txn_list == nullptr) {
+  if (txn_list == nullptr) {
     return (0);
   }
 
-  return (trx_recover_for_mysql(txn_list, len, mem_root));
+  return (trx_recover_for_mysql(txn_list, mem_root));
 }
 
 /** This function is used to commit one X/Open XA distributed transaction

@@ -321,6 +321,16 @@ typedef struct xid_t {
     return serialize_xid(buf, formatID, gtrid_length, bqual_length, data);
   }
 
+  /**
+    Set fields with serialized string stored in buf.
+    @retval true buf format error;
+            false success.
+  */
+  bool deserialize(const char *buf)
+  {
+    return deserialize_xid(buf, formatID, gtrid_length, bqual_length, data);
+  }
+
 #ifndef NDEBUG
   /**
      Get printable XID value.
@@ -372,8 +382,13 @@ typedef struct st_xarecover_txn {
   List<st_handler_tablename> *mod_tables;
 } XA_recover_txn;
 
+typedef std::list<XA_recover_txn> XA_recover_txn_list;
+
 class XID_STATE {
  public:
+  // If a session has an active ordinary txn(not xa), then
+  // thd->xid_state is valid but thd->xid_state->xa_state is XA_NOTR, i.e. these
+  // states are only maintained for XA txns.
   enum xa_states {
     XA_NOTR = 0,
     XA_ACTIVE,
@@ -438,6 +453,7 @@ class XID_STATE {
     m_xid_str[0] = '\0';
   }
 
+  std::string &to_string(std::string&out) const;
   void set_xa_type(xa_types t)
   {
     xa_type= t;
@@ -662,6 +678,9 @@ class Recovered_xa_transactions {
     @return Pointer to a initialized MEM_ROOT.
   */
   MEM_ROOT *get_allocated_memroot();
+
+  void clear();
+  size_t num_entries() const {return m_prepared_xa_trans.size();}
 
  private:
   // Disable direct instantiation. Use the method init() instead.

@@ -768,6 +768,7 @@ class MYSQL_BIN_LOG : public TC_LOG {
 
  private:
   bool after_write_to_relay_log(Master_info *mi);
+  int overwrite_index_file(const std::vector<std::string> &log_ents);
 
  public:
   void make_log_name(char *buf, const char *log_ident);
