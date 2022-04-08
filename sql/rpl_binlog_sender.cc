@@ -527,8 +527,19 @@ int Binlog_sender::send_binlog(File_reader *reader, my_off_t start_pos) {
   return 1;
 }
 
+/*
+  Return latest binlog event offset of current(m_linfo.log_file_name) binlog where
+  the file is synced. the returned offset is always the end of a complete event
+  because update_binlog_end_pos() is only called after complete events are
+  written and synced to file.
+
+  if current hot log is has no more events, wait for more;
+  if not hot log and reaches the end, return 0 to let caller read next log.
+*/
 int Binlog_sender::get_binlog_end_pos(File_reader *reader, my_off_t *end_pos) {
   DBUG_TRACE;
+
+  // current position the sender has already read.
   my_off_t read_pos = reader->position();
 
   do {
@@ -536,6 +547,8 @@ int Binlog_sender::get_binlog_end_pos(File_reader *reader, my_off_t *end_pos) {
       MYSQL_BIN_LOG::binlog_end_pos is atomic. We should only acquire the
       LOCK_binlog_end_pos if we reached the end of the hot log and are going
       to wait for updates on the binary log (Binlog_sender::wait_new_event()).
+      *end_pos always points to a complete event because update_binlog_end_pos()
+      is only called after some complete events are written.
     */
     *end_pos = mysql_bin_log.get_binlog_end_pos();
 

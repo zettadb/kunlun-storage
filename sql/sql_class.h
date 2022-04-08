@@ -1488,6 +1488,8 @@ class THD : public MDL_context_owner,
   const char *proc_info(const System_variables &sysvars) const;
 
   uint32 m_global_conn_id; // dzw: global connection id given by computing node.
+  ulonglong usecs_in_q; // dzw: NO. of usecs waiting in thread pool's queue.
+
  public:
   // See comment in THD::enter_cond about why SUPPRESS_TSAN is needed.
   void enter_stage(const PSI_stage_info *stage, PSI_stage_info *old_stage,
@@ -2525,18 +2527,20 @@ class THD : public MDL_context_owner,
   /* Statement id is thread-wide. This counter is used to generate ids */
   ulong statement_id_counter;
   ulong rand_saved_seed1, rand_saved_seed2;
-  my_thread_t real_id; /* For debugging */
-                       /**
-                         This counter is 32 bit because of the client protocol.
-                     
-                         @note It is not meant to be used for my_thread_self(), see @c real_id for
-                         this.
-                     
-                         @note Set to reserved_thread_id on initialization. This is a magic
-                         value that is only to be used for temporary THDs not present in
-                         the global THD list.
-                       */
+  my_thread_t real_id; /* pthread_self() result, for debugging */
+  pid_t      real_tid; // gettid() result.
  private:
+  /**
+    This counter is 32 bit because of the client protocol, allocated by mysql
+    internally, not related to operating system.
+ 
+    @note It is not meant to be used for my_thread_self(), see @c real_id for
+    this.
+
+    @note Set to reserved_thread_id on initialization. This is a magic
+    value that is only to be used for temporary THDs not present in
+    the global THD list.
+  */
   my_thread_id m_thread_id;
 
  public:
@@ -2546,6 +2550,13 @@ class THD : public MDL_context_owner,
   */
   void set_new_thread_id();
   my_thread_id thread_id() const { return m_thread_id; }
+  // return the pthread_t pthread_self() result of the OS thread currently
+  // handling this THD session.
+  my_thread_t real_thread_id() const { return real_id;}
+  // return the pid_t gettid() result of the OS thread currently
+  // handling this THD session.
+  pid_t real_thread_tid() const { return real_tid; }
+  
   uint tmp_table;
   uint server_status, open_options;
   enum enum_thread_type system_thread;

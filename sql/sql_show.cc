@@ -2678,7 +2678,7 @@ static void view_store_create_info(const THD *thd, TABLE_LIST *table,
 class thread_info {
  public:
   thread_info()
-      : thread_id(0),
+      : thread_id(0), pthread_id(0), thread_tid(0), global_conn_id(0),
         start_time_in_secs(0),
         start_time_in_usecs(0),
         command(0),
@@ -2689,6 +2689,9 @@ class thread_info {
         state_info(nullptr) {}
 
   my_thread_id thread_id;
+  ulonglong pthread_id;
+  int thread_tid;  
+  uint32 global_conn_id;
   time_t start_time_in_secs;
   ulonglong start_time_in_usecs;
   uint command;
@@ -2774,6 +2777,9 @@ class List_process_list : public Do_THD_Impl {
 
     /* ID */
     thd_info->thread_id = inspect_thd->thread_id();
+    thd_info->pthread_id= (print_extra_info > 0 ? inspect_thd->real_thread_id() : 0);
+    thd_info->thread_tid= (print_extra_info > 0 ? inspect_thd->real_thread_tid() : 0);
+    thd_info->global_conn_id= inspect_thd->get_global_connection_id();
 
     /* USER */
     if (inspect_sctx_user.str)
@@ -2908,6 +2914,16 @@ void mysqld_list_processes(THD *thd, const char *user, bool verbose) {
   field_list.push_back(field = new Item_return_int("Rows_examined",
                                                    MY_INT64_NUM_DECIMAL_DIGITS,
                                                    MYSQL_TYPE_LONGLONG));
+  field_list.push_back(field= new Item_return_int("pthread_id",
+                                                  MY_INT64_NUM_DECIMAL_DIGITS,
+                                                  MYSQL_TYPE_LONGLONG));
+  field_list.push_back(field= new Item_return_int("thread_tid",
+                                                  MY_INT32_NUM_DECIMAL_DIGITS,
+                                                  MYSQL_TYPE_LONG));
+  field_list.push_back(field= new Item_return_int("global_conn_id",
+                                                  MY_INT32_NUM_DECIMAL_DIGITS,
+                                                  MYSQL_TYPE_LONG));
+
   if (thd->send_result_metadata(field_list,
                                 Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
     return;
@@ -2957,6 +2973,10 @@ void mysqld_list_processes(THD *thd, const char *user, bool verbose) {
 
     protocol->store(thd_info->rows_sent);
     protocol->store(thd_info->rows_examined);
+    protocol->store(thd_info->pthread_id);
+    protocol->store(thd_info->thread_tid);
+    protocol->store(thd_info->global_conn_id);
+
     if (protocol->end_row()) break; /* purecov: inspected */
   }
   if (thd->lex->query_block != nullptr)
@@ -3086,6 +3106,9 @@ class Fill_process_list : public Do_THD_Impl {
     table->field[9]->store((ulonglong)inspect_thd->get_sent_row_count());
     /* ROWS_EXAMINED */
     table->field[10]->store((ulonglong)inspect_thd->get_examined_row_count());
+    table->field[11]->store(print_extra_info > 0 ? (ulonglong) inspect_thd->real_thread_id() : 0);
+    table->field[12]->store(print_extra_info > 0 ? (ulonglong) inspect_thd->real_thread_tid() : 0);
+    table->field[13]->store((ulonglong) inspect_thd->get_global_connection_id());
 
     mysql_mutex_unlock(&inspect_thd->LOCK_thd_data);
 
@@ -5569,6 +5592,12 @@ ST_FIELD_INFO processlist_fields_info[] = {
      MY_I_S_UNSIGNED, "Rows_sent", 0},
     {"ROWS_EXAMINED", MY_INT64_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONGLONG, 0,
      MY_I_S_UNSIGNED, "Rows_examined", 0},
+    {"PTHREAD_ID", MY_INT64_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONGLONG, 0,
+     MY_I_S_UNSIGNED, "Pthread_id", 0},
+    {"THREAD_TID", MY_INT32_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONG, 0,
+     MY_I_S_UNSIGNED, "Thread_tid", 0},
+    {"GLOBAL_CONN_ID", MY_INT32_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONG, 0,
+     MY_I_S_UNSIGNED, "Global_conn_id", 0},
     {nullptr, 0, MYSQL_TYPE_STRING, 0, 0, nullptr, 0}};
 
 ST_FIELD_INFO plugin_fields_info[] = {

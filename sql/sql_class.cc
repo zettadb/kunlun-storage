@@ -113,6 +113,10 @@
 
 class Parse_tree_root;
 
+#include <sys/types.h>
+#include <sys/syscall.h>
+#define gettid() syscall(SYS_gettid)
+
 using std::max;
 using std::min;
 using std::unique_ptr;
@@ -901,6 +905,11 @@ void THD::init(void) {
     ALTER USER statements.
   */
   m_disable_password_validation = false;
+
+  usecs_in_q = 0;
+  m_global_conn_id = 0;
+  real_tid=0;
+  real_id= 0;
 }
 
 void THD::init_query_mem_roots() {
@@ -975,7 +984,10 @@ void THD::cleanup_connection(void) {
   }
   /* DEBUG code only (end) */
 #endif
+  usecs_in_q = 0;
   m_global_conn_id = 0;
+  real_tid=0;
+  real_id= 0;
 }
 
 /*
@@ -1514,8 +1526,8 @@ void THD::store_globals() {
   set_my_thread_var_id(m_thread_id);
 #endif
   real_id = my_thread_self();  // For debugging
-
   vio_set_thread_id(net.vio, real_id);
+  real_tid= gettid();
 }
 
 /*
@@ -1532,6 +1544,8 @@ void THD::restore_globals() {
   /* Undocking the thread specific data. */
   current_thd = nullptr;
   THR_MALLOC = nullptr;
+  real_tid=0;
+  real_id=0;
 }
 
 // Resets stats in a THD.
