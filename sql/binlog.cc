@@ -5083,7 +5083,7 @@ bool MYSQL_BIN_LOG::open_binlog(
         sid_lock->assert_some_wrlock(); /* purecov: inspected */
 
       DBUG_PRINT("info", ("Generating PREVIOUS_GTIDS for relaylog file."));
-      Previous_gtids_log_event prev_gtids_ev(previous_gtid_set_relaylog);
+      Previous_gtids_log_event prev_gtids_ev(previous_gtid_set_relaylog, nullptr);
       prev_gtids_ev.set_relay_log_event();
 
       if (need_sid_lock) sid_lock->unlock();
