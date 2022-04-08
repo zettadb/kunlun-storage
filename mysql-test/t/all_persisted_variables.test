@@ -156,7 +156,7 @@ SET PERSIST innodb_monitor_enable="latch";
 SET PERSIST innodb_monitor_disable="latch";
 SET PERSIST innodb_monitor_reset="latch";
 SET PERSIST innodb_monitor_reset_all="latch";
-
+SELECT * FROM performance_schema.persisted_variables;
 --enable_warnings
 --enable_query_log
 --echo

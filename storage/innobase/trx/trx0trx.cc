@@ -804,11 +804,14 @@ static trx_t *trx_resurrect_insert(
     waiting for a commit or abort decision from MySQL */
 
     if (undo->state == TRX_UNDO_PREPARED) {
+      char xidbuf[XID::ser_buf_size];
       ib::info(ER_IB_MSG_1204) << "Transaction " << trx_get_id_for_print(trx)
-                               << " was in the XA prepared state.";
+                               << " (" << trx->xid->serialize(xidbuf)
+                               << ") was in the XA prepared state.";
 
       if (srv_force_recovery == 0) {
         trx->state.store(TRX_STATE_PREPARED, std::memory_order_relaxed);
+		trx->one_phase_prepared = (undo->flag & TRX_UNDO_FLAG_ONE_PHASE_PREPARED);
         ++trx_sys->n_prepared_trx;
       } else {
         ib::info(ER_IB_MSG_1205) << "Since innodb_force_recovery"
@@ -869,8 +872,11 @@ static void trx_resurrect_update_in_prepared_state(
   protection of trx->mutex or trx_sys->mutex here. */
 
   if (undo->state == TRX_UNDO_PREPARED) {
+    char xidbuf[XID::ser_buf_size];
+
     ib::info(ER_IB_MSG_1206) << "Transaction " << trx_get_id_for_print(trx)
-                             << " was in the XA prepared state.";
+                             << " (" << trx->xid->serialize(xidbuf)
+                             << ") was in the XA prepared state.";
 
     ut_ad(trx->state.load(std::memory_order_relaxed) !=
           TRX_STATE_FORCED_ROLLBACK);
@@ -882,6 +888,7 @@ static void trx_resurrect_update_in_prepared_state(
     }
 
     trx->state.store(TRX_STATE_PREPARED, std::memory_order_relaxed);
+    trx->one_phase_prepared = (undo->flag & TRX_UNDO_FLAG_ONE_PHASE_PREPARED);
   } else {
     trx->state.store(TRX_STATE_COMMITTED_IN_MEMORY, std::memory_order_relaxed);
   }
@@ -900,6 +907,29 @@ static void trx_resurrect_update(
     ut_a(trx->rsegs.m_redo.rseg == rseg);
     ut_ad(trx->id == undo->trx_id);
     ut_ad(trx->is_recovered);
+
+    /*
+      If we marked trx's update undo for abort, we should mark trx and trx's
+      insert undo log for abort too. In trx_undo_gtid_read_and_persist() we
+      could not easily find a trx's insert undo log using its update undo log
+      efficiently, so we do it here.
+     * */
+    trx_undo_t *insundo = trx->rsegs.m_redo.insert_undo;
+    if (insundo && insundo->state == TRX_UNDO_PREPARED &&
+        undo->state == TRX_UNDO_ACTIVE) {
+      insundo->state = TRX_UNDO_ACTIVE;
+      // must have been marked prepared in trx_resurrect_insert().
+      ut_ad(trx_state_eq(trx, TRX_STATE_PREPARED));
+      trx->state = TRX_STATE_ACTIVE;
+      --trx_sys->n_prepared_trx;
+      char xidsbuf[XID::ser_buf_size];
+      /*
+       * dzw: Found update undo log of transaction marked ACTIVE but its insert
+       * undo log PREPARED. Mark the trx and its insert undo log ACTIVE.
+       */
+      sql_print_information("Innodb Recovery: Found transaction %s with inconsistent undo log status, corrected.", undo->xid.serialize(xidsbuf));
+    }
+
     /* For GTID persistence, we might have empty update undo for
     insert only transactions. */
     if (undo->empty && trx_state_eq(trx, TRX_STATE_PREPARED)) {
@@ -3000,7 +3030,11 @@ static void trx_prepare(trx_t *trx) /*!< in/out: transaction */
   /* Check and get GTID to be persisted. Do it outside trx_sys mutex. */
   auto &gtid_persistor = clone_sys->get_gtid_persistor();
   Gtid_desc gtid_desc;
-  gtid_persistor.get_gtid_info(trx, gtid_desc);
+  gtid_desc.m_is_set = false;
+  bool thd_check;
+  MYSQL_THD trx_thd = trx->mysql_thd;
+  if (gtid_persistor.has_gtid(trx, trx_thd, thd_check))
+    gtid_persistor.get_gtid_info(trx, gtid_desc);
 
   /*--------------------------------------*/
   ut_a(trx->state.load(std::memory_order_relaxed) == TRX_STATE_ACTIVE);
@@ -3146,6 +3180,7 @@ static bool get_info_about_prepared_transaction(XA_recover_txn *txn_list,
   txn_list->id = *trx->xid;
   txn_list->mod_tables = new (mem_root) List<st_handler_tablename>();
   if (!txn_list->mod_tables) return true;
+  txn_list->one_phase_prepared = trx->one_phase_prepared;
 
   for (auto dd_table : trx->mod_tables) {
     st_handler_tablename *table = new (mem_root) st_handler_tablename();
@@ -3190,8 +3225,10 @@ int trx_recover_for_mysql(
                                     " XA transactions in Innodb...";
       }
 
+      char xidbuf[XID::ser_buf_size];
       ib::info(ER_IB_MSG_1208) << "Transaction " << trx_get_id_for_print(trx)
-                               << " in prepared state after recovery";
+                               << "("<< (trx->xid ? trx->xid->serialize(xidbuf) : "<null>")
+                               << ") in prepared state after recovery";
 
       ib::info(ER_IB_MSG_1209)
           << "Transaction contains changes to " << trx->undo_no << " rows";

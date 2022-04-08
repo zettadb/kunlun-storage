@@ -539,7 +539,7 @@ class MYSQL_BIN_LOG : public TC_LOG {
 
     @return Pointer to the first session of the BINLOG_FLUSH_STAGE stage queue.
   */
-  THD *fetch_and_process_flush_stage_queue(
+  THD *fetch_and_process_flush_stage_queue(THD *thd,
       const bool check_and_skip_flush_logs = false);
 
   /**
@@ -557,7 +557,7 @@ class MYSQL_BIN_LOG : public TC_LOG {
 
     @return Error code on error, zero on success
   */
-  int process_flush_stage_queue(my_off_t *total_bytes_var, bool *rotate_var,
+  int process_flush_stage_queue(THD *thd, my_off_t *total_bytes_var, bool *rotate_var,
                                 THD **out_queue_var);
 
   /**

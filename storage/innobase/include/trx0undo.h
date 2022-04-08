@@ -440,7 +440,7 @@ void trx_undo_gtid_set(trx_t *trx, trx_undo_t *undo, bool is_xa_prepare);
 
 /** Read and persist GTID from undo header during recovery.
 @param[in]	undo_log	undo log header */
-void trx_undo_gtid_read_and_persist(trx_ulogf_t *undo_log);
+void trx_undo_gtid_read_and_persist(trx_ulogf_t *undo_log, trx_undo_t *undo);
 
 /** Write GTID information to undo log header.
 @param[in,out]	trx		transaction
@@ -555,6 +555,9 @@ page of an update undo log segment. */
 #define TRX_UNDO_FLAG_XA_PREPARE_GTID        \
   0x04 /*!< TRUE if undo log header includes \
        GTID information for XA PREPARE */
+#define TRX_UNDO_FLAG_ONE_PHASE_PREPARED     \
+  0x80 /*!< TRUE if it is an external XA txn and it's prepared by XA COP. */
+
 #define TRX_UNDO_DICT_TRANS                  \
   21 /*!< TRUE if the transaction is a table \
      create, index create, or drop           \

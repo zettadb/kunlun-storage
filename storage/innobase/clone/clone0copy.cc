@@ -398,6 +398,7 @@ int Clone_Snapshot::init_redo_copy(Clone_Alert_Func cbk) {
   ut_ad(m_snapshot_handle_type == CLONE_HDL_COPY);
   ut_ad(m_snapshot_type != HA_CLONE_BLOCKING);
 
+  DEBUG_SYNC_C("clone_before_stop_redo_archiving");
   /* Block external XA operations. XA prepare commit and rollback operations
   are first logged to binlog and added to global gtid_executed before doing
   operation in SE. Without blocking, we might persist such GTIDs from global
@@ -421,8 +422,11 @@ int Clone_Snapshot::init_redo_copy(Clone_Alert_Func cbk) {
   /* Before stopping redo log archiving synchronize with binlog and GTID. At
   this point a transaction can commit only in the order they are written to
   binary log. We have ensure this by forcing ordered commit and waiting for
-  all unordered transactions to finish. */
-  if (binlog_error == 0) {
+  all unordered transactions to finish.
+  dzw: if we don't need consistency between innodb binlog physical position and
+  its data, we should not do the synchronization.
+  */
+  if (binlog_error == 0 && clone_binlog_phy_consistency) {
     binlog_error = synchronize_binlog_gtid(cbk);
   }
 

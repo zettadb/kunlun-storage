@@ -54,6 +54,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0rec.h"
 #include "trx0rseg.h"
 #include "trx0trx.h"
+#include "sql/sql_class.h" // THD::OWNED_SIDNO_ANONYMOUS
 
 /* How should the old versions in the history list be managed?
    ----------------------------------------------------------
@@ -140,6 +141,10 @@ static ulint trx_undo_insert_header_reuse(
                        header page, x-latched */
     trx_id_t trx_id,   /*!< in: transaction id */
     mtr_t *mtr);       /*!< in: mtr */
+
+static void init_xa_gtid_slots(trx_t *trx, trx_ulogf_t *undo_header, trx_undo_t *undo, mtr_t *mtr);
+trx_t *&thd_to_trx(THD *thd);
+extern int ddc_mode;
 
 #ifndef UNIV_HOTBACKUP
 /** Gets the previous record in an undo log from the previous page.
@@ -573,11 +578,23 @@ static void trx_undo_write_xid(
                    static_cast<ulint>(xid->get_bqual_length()), MLOG_4BYTES,
                    mtr);
 
-  mlog_write_string(log_hdr + TRX_UNDO_XA_XID,
-                    reinterpret_cast<const byte *>(xid->get_data()),
-                    XIDDATASIZE, mtr);
+  /*
+   * dzw:
+   * write only payload bytes, because most of time xa xid is much
+   * shorter than max length. payload lengths are already stored above.
+   */
+  auto payload_len = xid->get_gtrid_length() + xid->get_bqual_length();
+  if (payload_len > 0)
+    mlog_write_string(log_hdr + TRX_UNDO_XA_XID,
+                      reinterpret_cast<const byte *>(xid->get_data()),
+                      payload_len, mtr);
 }
 
+/*
+ * Check if trx needs its gtid be stored. If so, alloc undo log if it
+ * hasn't one. Such check&alloc only happens at end of an event group, i.e.
+ * when preparing an external XA txn, and/or when committing/aborting a txn.
+ * */
 dberr_t trx_undo_gtid_add_update_undo(trx_t *trx, bool prepare, bool rollback) {
   ut_ad(!(prepare && rollback));
   /* Check if GTID persistence is needed. */
@@ -592,8 +609,11 @@ dberr_t trx_undo_gtid_add_update_undo(trx_t *trx, bool prepare, bool rollback) {
 
   auto undo_ptr = &trx->rsegs.m_redo;
 
-  /* If update undo is already allocated, nothing to do. */
-  if (!alloc || undo_ptr->is_update()) {
+  /* If update undo is already allocated, nothing to do.
+   * dzw: if the trx doesn't modify any innodb tables, no need to add update
+   * undo log for it.
+   * */
+  if (!alloc || undo_ptr->is_update() || !trx_is_rseg_assigned(trx)) {
     return (DB_SUCCESS);
   }
 
@@ -661,18 +681,24 @@ void trx_undo_gtid_set(trx_t *trx, trx_undo_t *undo, bool is_xa_prepare) {
   undo->flag |= gtid_flag;
 }
 
-void trx_undo_gtid_read_and_persist(trx_ulogf_t *undo_header) {
+extern ulint srv_num_aborted_txns_no_gtid;
+extern bool opt_bin_log;
+void trx_undo_gtid_read_and_persist(trx_ulogf_t *undo_header, trx_undo_t *undo) {
   /* Check if undo log has GTID. */
   auto flag = mach_read_ulint(undo_header + TRX_UNDO_FLAGS, MLOG_1BYTE);
 
   /* Extract and add GTID information of the transaction to the persister. */
-  Gtid_desc gtid_desc;
+  Gtid_desc gtid_desc, gtid_desc_xaprep;
 
   /* Get GTID persister */
   auto &gtid_persistor = clone_sys->get_gtid_persistor();
 
-  /* Extract and add XA prepare GTID, if there. */
-  if ((flag & TRX_UNDO_FLAG_XA_PREPARE_GTID) != 0) {
+  // gtid slot for 1pc txns, including regular non-XA txns and XA COMMIT ONE PHASE.
+  auto pgtid1 = undo_header + TRX_UNDO_LOG_GTID;
+  // gtid slot for XA PREPARE of 2pc txns.
+  auto pgtid_xaprep = undo_header + TRX_UNDO_LOG_GTID_XA;
+
+  if ((flag & TRX_UNDO_FLAG_XA_PREPARE_GTID) != 0 && pgtid_xaprep[0]) {
     /* Get GTID format version. */
     gtid_desc.m_version = static_cast<uint32_t>(
         mach_read_from_1(undo_header + TRX_UNDO_LOG_GTID_VERSION));
@@ -695,12 +721,24 @@ void trx_undo_gtid_read_and_persist(trx_ulogf_t *undo_header) {
   }
 
   /* Get GTID format version. */
-  gtid_desc.m_version = static_cast<uint32_t>(
+  gtid_desc.m_version = gtid_desc_xaprep.m_version = static_cast<uint32_t>(
       mach_read_from_1(undo_header + TRX_UNDO_LOG_GTID_VERSION));
 
+  if (pgtid_xaprep[0] == '\0' && opt_bin_log)
+  {
+    if (undo && undo->state == TRX_UNDO_PREPARED) {
+      undo->state = TRX_UNDO_ACTIVE;
+	  srv_num_aborted_txns_no_gtid++;
+      char xidsbuf[XID::ser_buf_size];
+      sql_print_information("Innodb recovery: XA transaction %s found prepared but it has no gtid, so it's marked for abort.",
+          undo->xid.serialize(xidsbuf));
+    }
+
+    return;
+  }
+
   /* Get GTID information string. */
-  memcpy(&gtid_desc.m_info[0], undo_header + TRX_UNDO_LOG_GTID,
-         TRX_UNDO_LOG_GTID_LEN);
+  memcpy(&gtid_desc.m_info[0], pgtid1, TRX_UNDO_LOG_GTID_LEN);
   /* Mark GTID valid. */
   gtid_desc.m_is_set = true;
 
@@ -709,6 +747,33 @@ void trx_undo_gtid_read_and_persist(trx_ulogf_t *undo_header) {
   trx_sys_serialisation_mutex_enter();
   gtid_persistor.add(gtid_desc);
   trx_sys_serialisation_mutex_exit();
+}
+
+/*
+ * Initialize gtid slots for external XA txns, init them with '\0' in order to
+ * distinguish filled slots from those unfilled.
+ * */
+static void
+init_xa_gtid_slots(trx_t *trx, trx_ulogf_t *undo_header, trx_undo_t *undo,
+                   mtr_t *mtr) {
+
+  ut_ad(undo->state == TRX_UNDO_PREPARED);
+  // gtid slot for 1pc txns, including regular non-XA txns and XA COMMIT ONE PHASE.
+  auto pgtid1 = undo_header + TRX_UNDO_LOG_GTID;
+  // gtid slot for XA PREPARE of 2pc txns.
+  auto pgtid_xaprep = undo_header + TRX_UNDO_LOG_GTID_XA;
+  byte zeros[1] = {0};
+  if ((!(undo->flag & TRX_UNDO_FLAG_GTID) && !(undo->flag & TRX_UNDO_FLAG_XA_PREPARE_GTID)) ||
+      trx_is_mysql_xa(trx))
+    return;
+  /*
+   * The 1st byte of each gtid slot is tested to see if gtid stored into
+   * the slot.
+   * */
+  if (*pgtid1 != '\0')
+	mlog_write_string(pgtid1, zeros, 1, mtr);
+  if (*pgtid_xaprep != '\0')
+    mlog_write_string(pgtid_xaprep, zeros, 1, mtr);
 }
 
 void trx_undo_gtid_write(trx_t *trx, trx_ulogf_t *undo_header, trx_undo_t *undo,
@@ -737,10 +802,15 @@ void trx_undo_gtid_write(trx_t *trx, trx_ulogf_t *undo_header, trx_undo_t *undo,
   gtid_persistor.get_gtid_info(trx, gtid_desc);
 
   if (gtid_desc.m_is_set) {
-    /* Persist GTID version */
+    /* Persist fixed length GTID
+     * dzw: undo log could come from cached reuse(undo->state==2),
+	 * so must see trx->state.
+     * */
+    ut_ad((trx->state == TRX_STATE_ACTIVE /*&& !trx_is_mysql_xa(trx) exception: 'create select' stmt. it doesn't do trx_prepare(). */) ||
+          trx->state == TRX_STATE_PREPARED);
     mlog_write_ulint(undo_header + TRX_UNDO_LOG_GTID_VERSION,
                      gtid_desc.m_version, MLOG_1BYTE, mtr);
-    /* Persist fixed length GTID */
+
     ut_ad(TRX_UNDO_LOG_GTID_LEN == GTID_INFO_SIZE);
     mlog_write_string(undo_header + gtid_offset, &gtid_desc.m_info[0],
                       TRX_UNDO_LOG_GTID_LEN, mtr);
@@ -763,7 +833,9 @@ static void trx_undo_read_xid(
   xid->set_bqual_length(
       static_cast<long>(mach_read_from_4(log_hdr + TRX_UNDO_XA_BQUAL_LEN)));
 
-  xid->set_data(log_hdr + TRX_UNDO_XA_XID, XIDDATASIZE);
+  auto len = xid->get_gtrid_length() + xid->get_bqual_length();
+  if (len > 0 && len <= XIDDATASIZE)
+    xid->set_data(log_hdr + TRX_UNDO_XA_XID, len);
 }
 
 /** Adds space for the XA XID after an undo log old-style header.
@@ -1401,7 +1473,7 @@ add_to_list:
       /* For XA prepared transaction and XA rolled back transaction, we
       could have GTID to be persisted. */
       if (state == TRX_UNDO_PREPARED || state == TRX_UNDO_ACTIVE) {
-        trx_undo_gtid_read_and_persist(undo_header);
+        trx_undo_gtid_read_and_persist(undo_header, undo);
       }
     } else {
       UT_LIST_ADD_LAST(rseg->update_undo_cached, undo);
@@ -1848,6 +1920,107 @@ page_t *trx_undo_set_state_at_finish(
   return (undo_page);
 }
 
+/**
+ * dzw:
+ * Write thd->owned_gtid if any into its undo log header.
+ * */
+void store_prepared_xa_gtid(trx_t *trx) {
+
+  ut_ad(trx);
+  trx_undo_t *undo = nullptr;
+  trx_usegf_t *seg_hdr;
+  trx_ulogf_t *undo_header;
+  page_t *undo_page;
+  ulint offset;
+  mtr_t mtr;
+  THD *thd = trx->mysql_thd;
+  ut_ad(thd);
+  trx_undo_ptr_t *undo_ptr = &trx->rsegs.m_redo;
+  undo = undo_ptr->update_undo;
+
+  /*
+   * If there is no update undo log, no gtid is possibly generated nor can be
+   * written, and we have nothing to do.
+   * */
+  if (!undo) {
+    ut_ad(thd->owned_gtid.is_empty() ||
+          thd->owned_gtid.sidno == THD::OWNED_SIDNO_ANONYMOUS);
+    return;
+  }
+
+  // Check that trx is in PREPARED state and is an external XA txn.
+  ut_ad(undo->state == TRX_UNDO_PREPARED && !trx_is_mysql_xa(trx));
+
+  ut_a(undo->id < TRX_RSEG_N_SLOTS);
+  
+  auto &gtid_persistor = clone_sys->get_gtid_persistor();
+  auto gtid_explicit = false;
+  bool alloc = gtid_persistor.trx_check_set(trx, true/*prepare*/, false, gtid_explicit);
+  /*
+   * gtid_mode may be OFF or other conditions don't support gtid,
+   * i.e. !alloc && !trx->persists_gtid;
+   * and gtid_mode may also be ON/OFF_PERMISSIVE and in
+   * permissive mode GTID could be assigned during XA commit/rollback,
+   * i.e. alloc && !trx->persists_gtid;
+   * */
+  if (!trx->persists_gtid)
+    return;
+
+  ut_ad(alloc && trx->persists_gtid);
+  trx_rseg_t *rseg = undo_ptr->rseg;
+
+  mtr_start_sync(&mtr);
+  mutex_enter(&rseg->mutex);
+  undo_page = trx_undo_page_get(page_id_t(undo->space, undo->hdr_page_no),
+                                undo->page_size, &mtr);
+
+  seg_hdr = undo_page + TRX_UNDO_SEG_HDR;
+
+  offset = mach_read_from_2(seg_hdr + TRX_UNDO_LAST_LOG);
+  undo_header = undo_page + offset;
+  /*
+   * If no gtid is generated for the txn, probably because gtid_mode is < 2,
+   * then clear the GTID flag.
+   * */
+  if (thd->owned_gtid.is_empty() ||
+      thd->owned_gtid.sidno == THD::OWNED_SIDNO_ANONYMOUS) {
+    undo->flag &= ~(TRX_UNDO_FLAG_GTID | TRX_UNDO_FLAG_XA_PREPARE_GTID);
+    mlog_write_ulint(undo_header + TRX_UNDO_FLAGS, undo->flag, MLOG_1BYTE, &mtr);
+    goto done;
+  }
+
+  /* Write GTID information if there. */
+  ut_ad(undo->flag & TRX_UNDO_FLAG_XA_PREPARE_GTID);
+  trx_undo_gtid_write(trx, undo_header, undo, &mtr, true);
+done:
+  mutex_exit(&rseg->mutex);
+  mtr_commit(&mtr);
+}
+
+void add_gtid_to_persistor(trx_t *trx)
+{
+  THD *thd = trx->mysql_thd;
+  ut_ad(thd);
+  if (thd->owned_gtid.is_empty() ||
+      thd->owned_gtid.sidno == THD::OWNED_SIDNO_ANONYMOUS)
+    return;
+
+  /* Check and get GTID to be persisted. Do it outside trx_sys mutex. */
+  auto &gtid_persistor = clone_sys->get_gtid_persistor();
+  Gtid_desc gtid_desc;
+  gtid_persistor.get_gtid_info(trx, gtid_desc);
+  /* Add GTID to be persisted to disk table, if needed. 
+   * */
+  if (gtid_desc.m_is_set) {
+    trx_sys_serialisation_mutex_enter();
+    gtid_persistor.add(gtid_desc);
+	trx_sys_serialisation_mutex_exit();
+
+  }
+  DBUG_EXECUTE_IF("ib_crash_after_gtid_added_to_persistor", DBUG_SUICIDE(););
+
+}
+
 /** Set the state of the undo log segment at a XA PREPARE or XA ROLLBACK.
 @param[in,out]	trx		Transaction
 @param[in,out]	undo		Insert_undo or update_undo log
@@ -1873,9 +2046,13 @@ page_t *trx_undo_set_state_at_prepare(trx_t *trx, trx_undo_t *undo,
   offset = mach_read_from_2(seg_hdr + TRX_UNDO_LAST_LOG);
   undo_header = undo_page + offset;
 
-  /* Write GTID information if there. */
-  trx_undo_gtid_write(trx, undo_header, undo, mtr, !rollback);
-
+  /* Write GTID information if there is, no op otherwise.
+   * */
+  auto &gtid_persistor = clone_sys->get_gtid_persistor();
+  bool thd_check;
+  MYSQL_THD trx_thd = trx->mysql_thd;
+  if (gtid_persistor.has_gtid(trx, trx_thd, thd_check))
+    trx_undo_gtid_write(trx, undo_header, undo, mtr, !rollback);
   if (rollback) {
     ut_ad(undo->state == TRX_UNDO_PREPARED);
     mlog_write_ulint(seg_hdr + TRX_UNDO_STATE, TRX_UNDO_ACTIVE, MLOG_2BYTES,
@@ -1888,10 +2065,25 @@ page_t *trx_undo_set_state_at_prepare(trx_t *trx, trx_undo_t *undo,
 
   mlog_write_ulint(seg_hdr + TRX_UNDO_STATE, undo->state, MLOG_2BYTES, mtr);
 
-  mlog_write_ulint(undo_header + TRX_UNDO_FLAGS, undo->flag, MLOG_1BYTE, mtr);
+  if (trx->mysql_thd->is_one_phase_commit()) {
+    undo->flag |= TRX_UNDO_FLAG_ONE_PHASE_PREPARED;
+    trx->one_phase_prepared = true;
+  } else {
+    undo->flag &= ~TRX_UNDO_FLAG_ONE_PHASE_PREPARED;
+    trx->one_phase_prepared = false;
+  }
+
+  if (!rollback && undo->type == TRX_UNDO_UPDATE) {
+    init_xa_gtid_slots(trx, undo_header, undo, mtr);
+  }
 
   trx_undo_write_xid(undo_header, &undo->xid, mtr);
 
+  /*
+    dzw: must write the flag byte last after all data slots it claims to have
+	are actually written.
+  */
+  mlog_write_ulint(undo_header + TRX_UNDO_FLAGS, undo->flag, MLOG_1BYTE, mtr);
   return (undo_page);
 }
 

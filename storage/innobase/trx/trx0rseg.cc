@@ -184,7 +184,6 @@ static void trx_rseg_persist_gtid(trx_rseg_t *rseg, trx_id_t gtid_trx_no) {
   ut_ad(node_addr.page != FIL_NULL);
 
   mtr_commit(&mtr);
-
   while (node_addr.page != FIL_NULL) {
     mtr_start(&mtr);
     /* Get the undo page pointed by current node. */
@@ -202,7 +201,12 @@ static void trx_rseg_persist_gtid(trx_rseg_t *rseg, trx_id_t gtid_trx_no) {
       mtr_commit(&mtr);
       break;
     }
-    trx_undo_gtid_read_and_persist(undo_log);
+
+    /*
+      In history list all txns are committed, there are no XA PREPARED txns here,
+      so no need to mark for abort the XA PREPARED txns which don't have 1st gtid.
+    */
+    trx_undo_gtid_read_and_persist(undo_log, nullptr);
 
     /* Move to next node. */
     node_addr = flst_get_next_addr(node, &mtr);

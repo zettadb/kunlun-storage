@@ -39,7 +39,7 @@ class THD;
 class Srv_session;
 struct Mysql_clone;
 struct MYSQL_SOCKET;
-
+extern bool clone_binlog_phy_consistency;
 /**
   Number of PSI_statement_info instruments
   for clone statements.
@@ -105,7 +105,7 @@ class Clone_handler {
 
   /** @return true, if ordered commit should be forced. Currently
   clone would force ordered commit at end while blocking XA operations */
-  static bool need_commit_order() { return (s_xa_block_op.load()); }
+  static bool need_commit_order() { return (clone_binlog_phy_consistency && s_xa_block_op.load()); }
 
   /* Initialize XA counters and mutex. */
   static void init_xa();

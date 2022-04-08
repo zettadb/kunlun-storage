@@ -359,6 +359,8 @@ Clone_handler::XA_Operation::~XA_Operation() {
 }
 
 void Clone_handler::begin_xa_operation(THD *thd) {
+  if (!clone_binlog_phy_consistency)
+    return;
   /* Quick sequential consistent check and return if not blocked by clone. This
   ensures minimum impact during normal operations. */
   s_xa_counter.fetch_add(1);
@@ -414,6 +416,8 @@ bool Clone_handler::block_xa_operation(THD *thd) {
   bool ret = true;
   assert(!s_xa_block_op.load());
 
+  if (!clone_binlog_phy_consistency)
+    return true;
   mysql_mutex_lock(&s_xa_mutex);
   /* Block new xa prepare/commit/rollback. No new XA operation can start after
   this point and existing operations will eventually finish. */

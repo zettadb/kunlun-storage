@@ -476,6 +476,11 @@ static bool xarecover_handlerton(THD *, plugin_ref plugin, void *arg) {
           }
           else
           {
+            if (target_xrt.one_phase_prepared) {
+              // this is only possible for 1st startup of cloned instance.
+              goto abort_i;
+            }
+
             if (Recovered_xa_transactions::instance().add_prepared_xa_transaction(&target_xrt))
               return true;
 

@@ -1388,6 +1388,7 @@ static int prepare_one_ht(THD *thd, handlerton *ht) {
   return 0;
 }
 
+int xa_prep_cop_binlog_last = 1;
 /**
   @retval
     0   ok
@@ -1450,7 +1451,7 @@ int ha_xa_prepare(THD *thd) {
       /* Prepare all SE other than binlog, first. */
       ha_info = trn_ctx->ha_trx_info(Transaction_ctx::SESSION);
       handlerton *binlog_ht = nullptr;
-      const bool is_xa_prepare= (thd->lex->sql_command == SQLCOM_XA_PREPARE);
+      const bool is_xa_prepare= (thd->lex->sql_command == SQLCOM_XA_PREPARE && xa_prep_cop_binlog_last);
 
       while (ha_info != nullptr && error == 0) {
         auto ht = ha_info->ht();
@@ -2376,7 +2377,7 @@ int ha_prepare_low(THD *thd, bool all) {
   // do innodb prepare first. Only for XA-COP is binlog flushed here.
   const bool is_xa_cop=
     (thd->lex && thd->lex->sql_command == SQLCOM_XA_COMMIT &&
-     thd->lex->m_sql_cmd &&
+     thd->lex->m_sql_cmd && xa_prep_cop_binlog_last &&
      static_cast<Sql_cmd_xa_commit*>(thd->lex->m_sql_cmd)->get_xa_opt() ==
      XA_ONE_PHASE);
 

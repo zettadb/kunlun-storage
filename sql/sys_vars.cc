@@ -7920,3 +7920,36 @@ static Sys_var_ulong Sys_cluster_id(
     READ_ONLY GLOBAL_VAR(cluster_id), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(0, INT_MAX32), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
+#ifndef NDEBUG
+extern int xa_prep_cop_binlog_last;
+static Sys_var_int32 Sys_xa_prep_cop_binlog_last(
+    "xa_prep_cop_binlog_last",
+    "xa_prep_cop_binlog_last",
+    GLOBAL_VAR(xa_prep_cop_binlog_last),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, 1000), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0), DEPRECATED_VAR(""));
+#endif
+
+/*
+ * Is gtid possible to be generated and assigned to thd's trx's
+ * innodb update undo log, if not already generated or
+ * assigned(only applicable for slaves, since this
+ * is called before gtid generated for a trx).
+ * */
+bool thd_gtid_generatable(THD *thd, bool &is_sbr)
+{
+  is_sbr = (thd->variables.binlog_format == BINLOG_FORMAT_STMT);
+  return (!thd->slave_thread && thd->variables.sql_log_bin &&
+         opt_bin_log && Gtid_mode::sysvar_mode >= Gtid_mode::ON_PERMISSIVE) ||
+         !(thd->owned_gtid.is_empty() ||
+           thd->owned_gtid.sidno == THD::OWNED_SIDNO_ANONYMOUS);
+}
+
+bool clone_binlog_phy_consistency = true;
+static Sys_var_bool Sys_clone_binlog_phy_consistency(
+       "clone_binlog_phy_consistency",
+       "Keep binlog physical position consistent with data in SEs.",
+       GLOBAL_VAR(clone_binlog_phy_consistency),
+       CMD_LINE(OPT_ARG), DEFAULT(true));

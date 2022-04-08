@@ -379,6 +379,7 @@ struct st_handler_tablename;
 */
 typedef struct st_xarecover_txn {
   XID id;
+  bool one_phase_prepared;
   List<st_handler_tablename> *mod_tables;
 } XA_recover_txn;
 

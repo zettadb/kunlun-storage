@@ -5648,8 +5648,11 @@ extern "C" void *handle_slave_io(void *arg) {
                          ER_THD(thd, ER_SERVER_OUT_OF_RESOURCES));
               goto err;
             default:
+#ifdef DBUG_OFF
+              /* in debug build we don't want to produce warning for mtr tests. */
               sql_print_error("Slave IO thread failed to read event, with unknown and ignored error: %u. Reconnecting...",
                   mysql_error_number);
+#endif
               break;
           }
           if (try_to_reconnect(thd, mysql, mi, &retry_count, suppress_warnings,

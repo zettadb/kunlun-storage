@@ -170,6 +170,9 @@ ulong rpl_read_size;
 
 int64_t multi_purpose_int = 0;
 int fetch_xa_prepared();
+void innobase_store_prepared_xa_gtid(THD *thd);
+void innobase_add_gtid_to_persistor(THD *thd);
+
 MYSQL_BIN_LOG mysql_bin_log(&sync_binlog_period);
 
 static int binlog_init(void *p);
@@ -1464,7 +1467,8 @@ int binlog_cache_data::write_event(Log_event *ev) {
         ((XA_prepare_log_event *)ev)->is_one_phase())
       flags.with_xid = true;
     if (ev->get_type_code() == binary_log::QUERY_EVENT &&
-        ((Query_log_event *)ev)->is_query_prefix_match(STRING_WITH_LEN("XA COMMIT")))
+        (((Query_log_event *)ev)->is_query_prefix_match(STRING_WITH_LEN("XA COMMIT")) ||
+         ((Query_log_event *)ev)->is_query_prefix_match(STRING_WITH_LEN("XA ROLLBACK"))))
       flags.with_xid = true;
     if (ev->is_using_immediate_logging()) flags.immediate = true;
     /* DDL gets marked as xid-requiring at its caching. */
@@ -8791,7 +8795,7 @@ void MYSQL_BIN_LOG::init_thd_variables(THD *thd, bool all, bool skip_commit) {
 }
 
 THD *MYSQL_BIN_LOG::fetch_and_process_flush_stage_queue(
-    const bool check_and_skip_flush_logs) {
+    THD *thd, const bool check_and_skip_flush_logs) {
   /*
     Fetch the entire flush queue and empty it, so that the next batch
     has a leader. We must do this before invoking ha_flush_logs(...)
@@ -8813,6 +8817,29 @@ THD *MYSQL_BIN_LOG::fetch_and_process_flush_stage_queue(
   Commit_stage_manager::get_instance().unlock_queue(
       Commit_stage_manager::BINLOG_FLUSH_STAGE);
 
+
+  /* assign gtid for each committing txn to be flushed. */
+  assign_automatic_gtids_to_flush_group(first_seen);
+
+  DBUG_EXECUTE_IF("crash_before_flush_binlog", {ha_flush_logs(true); DBUG_SUICIDE();});
+
+  /*
+   * dzw:
+   * Store valid gtid if any of prepared XA txns, XA PREPARE is going on and the txn status
+   * is still IDLE, it's set to PREPARED at end of XA PREPARE execution.
+   * Do this before flushing engine logs to guarantee it's crash safe.
+   * */
+  for (THD *head = first_seen; head; head = head->next_to_commit) {
+    XID_STATE *xs = nullptr;
+    if (head->get_transaction())
+      xs = head->get_transaction()->xid_state();
+    if (xs && xs->has_state(XID_STATE::XA_IDLE) &&
+        head->lex->sql_command == SQLCOM_XA_PREPARE) {
+      Thd_backup_and_restore switch_thd(thd, head);
+      innobase_store_prepared_xa_gtid(head);
+    }
+  }
+  
   if (!check_and_skip_flush_logs ||
       (check_and_skip_flush_logs && commit_order_thd != nullptr)) {
     /*
@@ -8832,7 +8859,7 @@ THD *MYSQL_BIN_LOG::fetch_and_process_flush_stage_queue(
   return first_seen;
 }
 
-int MYSQL_BIN_LOG::process_flush_stage_queue(my_off_t *total_bytes_var,
+int MYSQL_BIN_LOG::process_flush_stage_queue(THD *thd, my_off_t *total_bytes_var,
                                              bool *rotate_var,
                                              THD **out_queue_var) {
   DBUG_TRACE;
@@ -8845,9 +8872,9 @@ int MYSQL_BIN_LOG::process_flush_stage_queue(my_off_t *total_bytes_var,
   int flush_error = 1;
   mysql_mutex_assert_owner(&LOCK_log);
 
-  THD *first_seen = fetch_and_process_flush_stage_queue();
+  THD *first_seen = fetch_and_process_flush_stage_queue(thd);
   DBUG_EXECUTE_IF("crash_after_flush_engine_log", DBUG_SUICIDE(););
-  assign_automatic_gtids_to_flush_group(first_seen);
+
   /* Flush thread caches to binary log. */
   for (THD *head = first_seen; head; head = head->next_to_commit) {
     std::pair<int, my_off_t> result = flush_thread_caches(head);
@@ -9324,7 +9351,7 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
   my_off_t flush_end_pos = 0;
   bool update_binlog_end_pos_after_sync;
   if (unlikely(!is_open())) {
-    final_queue = fetch_and_process_flush_stage_queue(true);
+    final_queue = fetch_and_process_flush_stage_queue(thd, true);
     leave_mutex_before_commit_stage = &LOCK_log;
     /*
       binary log is closed, flush stage and sync stage should be
@@ -9336,7 +9363,7 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
   }
   DEBUG_SYNC(thd, "waiting_in_the_middle_of_flush_stage");
   flush_error =
-      process_flush_stage_queue(&total_bytes, &do_rotate, &wait_queue);
+      process_flush_stage_queue(thd, &total_bytes, &do_rotate, &wait_queue);
 
   if (flush_error == 0 && total_bytes > 0)
     flush_error = flush_cache_to_file(&flush_end_pos);
@@ -9428,7 +9455,20 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
 
   DEBUG_SYNC(thd, "bgc_after_sync_stage_before_commit_stage");
 
+  // dzw: add final_queue's each prepared XA txn's valid gtid if any to gtid_persistor.
+  for (THD *head = final_queue; head; head = head->next_to_commit) {
+    XID_STATE *xs = nullptr;
+    if (head->get_transaction())
+      xs = head->get_transaction()->xid_state();
+    if (xs && xs->has_state(XID_STATE::XA_IDLE) &&
+        head->lex->sql_command == SQLCOM_XA_PREPARE) {
+      Thd_backup_and_restore switch_thd(thd, head);
+      innobase_add_gtid_to_persistor(head);
+    }
+  }
+
   leave_mutex_before_commit_stage = &LOCK_sync;
+
   /*
     Stage #3: Commit all transactions in order.
 
@@ -9448,7 +9488,7 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
   */
 commit_stage:
   /* Clone needs binlog commit order. */
-  if ((opt_binlog_order_commits || Clone_handler::need_commit_order()) &&
+  if ((opt_binlog_order_commits || Clone_handler::need_commit_order() /*as explained above */) &&
       (sync_error == 0 || binlog_error_action != ABORT_SERVER)) {
     if (change_stage(thd, Commit_stage_manager::COMMIT_STAGE, final_queue,
                      leave_mutex_before_commit_stage, &LOCK_commit)) {
@@ -9745,7 +9785,6 @@ static bool binlog_recover(Binlog_file_reader *binlog_file_reader,
       will result in an assert. (Production builds would be safe since
       ha_recover returns right away if total_ha_2pc <= opt_log_bin.)
      */
-    res = res || (total_ha_2pc > 1 && ha_recover(&xids));
     if (res == false && !skip_recovery && total_ha_2pc > 1)
       res = ha_recover(&xids, &xa_prepared, &xa_cop,
                    &xa_committed, &xa_aborted, &engine_prepared);

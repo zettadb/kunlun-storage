@@ -159,17 +159,20 @@ void Clone_persist_gtid::set_persist_gtid(trx_t *trx, bool set) {
   thd->set_gtid_persisted_by_se();
 }
 
+bool thd_gtid_generatable(THD *thd, bool &issbr);
+
 bool Clone_persist_gtid::trx_check_set(trx_t *trx, bool prepare, bool rollback,
                                        bool &set_explicit) {
   auto thd = trx->mysql_thd;
   bool alloc_check = false;
-
+  ut_ad(!(prepare && rollback));
   bool gtid_exists = has_gtid(trx, thd, alloc_check);
 
   set_explicit = false;
 
   if (prepare) {
-    /* Check for XA prepare. */
+    /* Check for XA prepare.
+     * */
     gtid_exists = check_gtid_prepare(thd, trx, gtid_exists, alloc_check);
   } else if (rollback) {
     /* Check for Rollback. */
@@ -209,10 +212,20 @@ bool Clone_persist_gtid::check_gtid_prepare(THD *thd, trx_t *trx,
       alloc = true;
     }
   }
-  /* Skip GTID if not set */
-  if (!found_gtid) {
+  /* Skip GTID if not set.
+    dzw:
+    If this is an INTERNAL txn, it can't be a mysql internal XA txn otherwise
+	control exists at above return, so if it's in NOTR state, it must be a
+	mysql/innodb internal regular txn involving no binlog or other storage engines,
+	such a txn needs no gtids. 
+    Otherwise we are in XA PREPARE execution, binlog_prepare is done after all
+    engine prepare, so here there is no gtid in thd, but we will always log it.
+   */
+  if (!found_gtid &&
+      xid_state->get_xa_type() == XID_STATE::XA_INTERNAL &&
+	  xid_state->get_state() == XID_STATE::XA_NOTR)
     return (false);
-  }
+
   /* Skip GTID if External XA transaction is not in IDLE state. */
   if (!xid_state->has_state(XID_STATE::XA_IDLE)) {
     ut_ad(false);
@@ -222,6 +235,22 @@ bool Clone_persist_gtid::check_gtid_prepare(THD *thd, trx_t *trx,
   if (!thd->se_persists_gtid()) {
     return (false);
   }
+
+  /*
+   * dzw: we allow thd->owned_gtid to be empty here and still believe gtid
+   * will exist when it's not generated yet, we believe it will be generated later.
+   * But we want to make sure it's ever generatable and store_prepared_xa_gtid()
+   * will ever be called to set the gtid to trx's innodb update undo log.
+   *
+   * If a txn only modifies temp tables, it's not gonna be written to binlog
+   * in SBR.
+   * */
+  bool is_sbr = false;
+  if (!found_gtid && (!thd_gtid_generatable(thd, is_sbr) ||
+      (!trx_is_redo_rseg_updated(trx) && !is_sbr))) {
+    return false;
+  }
+
   alloc = true;
   return (true);
 }
@@ -343,7 +372,12 @@ void Clone_persist_gtid::get_gtid_info(trx_t *trx, Gtid_desc &gtid_desc) {
   auto thd = trx->mysql_thd;
 
   if (!has_gtid(trx, thd, thd_check)) {
-    ut_ad(false);
+    /*
+     * dzw: when thd is nullptr here, trx->mysql_thd is nullptr and this function is
+     * not executed in any valid worker thread. it's only seen executed at
+     * mysqld exit.
+     * */
+    if (thd) ut_ad(false);
     return;
   }
 
@@ -529,8 +563,11 @@ void Clone_persist_gtid::flush_gtids(THD *thd) {
     my_free(gtid_buffer);
   }
 
-  /* Update trx number upto which GTID is written to table. */
+  DEBUG_SYNC_C("gtid_persistor_wrote_table_not_updated_oldest_trx_no");
+  /* Update trx number upto which GTID is written to table.
+   * */
   update_gtid_trx_no(oldest_trx_no);
+  DEBUG_SYNC_C("gtid_persistor_wrote_table_updated_oldest_trx_no");
 
   /* Request Compression once the counter reaches threshold. */
   bool debug_skip = debug_skip_write(true);
