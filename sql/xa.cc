@@ -1294,7 +1294,8 @@ bool Sql_cmd_xa_recover::trans_xa_recover(THD *thd) {
   for (const auto &key_and_value : transaction_cache) {
     Transaction_ctx *transaction = key_and_value.second.get();
     XID_STATE *xs = transaction->xid_state();
-    if (xs->has_state(XID_STATE::XA_PREPARED)) {
+    if (xs->has_state(XID_STATE::XA_PREPARED) &&
+        (m_xid == NULL || xs->get_xid()->eq(m_xid))) {      
       protocol->start_row();
       xs->store_xid_info(protocol, m_print_xid_as_hex);
 

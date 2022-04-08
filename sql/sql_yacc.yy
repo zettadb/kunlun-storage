@@ -17854,6 +17854,11 @@ xa:
             Lex->sql_command = SQLCOM_XA_RECOVER;
             Lex->m_sql_cmd= NEW_PTN Sql_cmd_xa_recover($3);
           }
+        | XA_SYM RECOVER_SYM xid
+          {
+            Lex->sql_command = SQLCOM_XA_RECOVER;
+            Lex->m_sql_cmd= new (YYTHD->mem_root) Sql_cmd_xa_recover($3);
+          }
         ;
 
 opt_convert_xid:

@@ -129,7 +129,12 @@ class Sql_cmd_xa_prepare : public Sql_cmd {
 class Sql_cmd_xa_recover : public Sql_cmd {
  public:
   explicit Sql_cmd_xa_recover(bool print_xid_as_hex)
-      : m_print_xid_as_hex(print_xid_as_hex) {}
+  : m_print_xid_as_hex(print_xid_as_hex), m_xid(NULL)
+  {}
+
+  explicit Sql_cmd_xa_recover(xid_t *xid)
+  : m_print_xid_as_hex(false), m_xid(xid)
+  {}
 
   enum_sql_command sql_command_code() const override {
     return SQLCOM_XA_RECOVER;
@@ -142,6 +147,7 @@ class Sql_cmd_xa_recover : public Sql_cmd {
   bool trans_xa_recover(THD *thd);
 
   bool m_print_xid_as_hex;
+  xid_t *m_xid;
 };
 
 class XID_STATE;
