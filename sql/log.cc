@@ -112,6 +112,7 @@
 
 using std::max;
 using std::min;
+extern int print_extra_info;
 
 enum enum_slow_query_log_table_field {
   SQLT_FIELD_START_TIME = 0,
@@ -686,14 +687,17 @@ bool File_query_log::write_general(ulonglong event_utime,
     goto err;
 
   // write extra info
-  if (my_b_write(&log_file, pointer_cast<const uchar*>("\t"), 1))
-    goto err;
-  if (my_b_write(&log_file, pointer_cast<const uchar*>(extra_info), extra_len))
-    goto err;
+  if (extra_info != nullptr && extra_info[0] != '\0' && extra_len > 0)
+  {
+    if (my_b_write(&log_file, pointer_cast<const uchar*>("\t"), 1))
+      goto err;
+    if (my_b_write(&log_file, pointer_cast<const uchar*>(extra_info), extra_len))
+      goto err;
 
-  if (my_b_write(&log_file, pointer_cast<const uchar *>("\n"), 1) ||
-      flush_io_cache(&log_file))
-    goto err;
+    if (my_b_write(&log_file, pointer_cast<const uchar *>("\n"), 1) ||
+        flush_io_cache(&log_file))
+      goto err;
+  }
 
   mysql_mutex_unlock(&LOCK_log);
   return false;
@@ -981,7 +985,7 @@ bool Log_to_csv_event_handler::log_general(
   struct timeval tv;
 
   const int extra_info_len= 255;
-  char extra_info[extra_info_len];
+  char extra_info[extra_info_len] = {'\0'};
   uint32 global_conn_id = 0;
   Security_context *secctx = (thd ? thd->security_context () : nullptr);
   size_t num_written= 0;
@@ -1056,14 +1060,16 @@ bool Log_to_csv_event_handler::log_general(
 
   // generate extra field, which is a ip:port|global_conn_id string.
   if (thd) global_conn_id = thd->get_global_connection_id();
-
-  num_written=
-    snprintf(extra_info,extra_info_len, "%*s:%u|%u",
-             (secctx ? (int)secctx->host_or_ip().length : 0),
-             (secctx ? secctx->host_or_ip().str : nullptr),
-             thd->peer_port, global_conn_id);
-  if (num_written >= extra_info_len)
-    num_written= extra_info_len-1;
+  if (print_extra_info)
+  {
+    num_written=
+      snprintf(extra_info,extra_info_len, "%*s:%u-%u",
+               (secctx ? (int)secctx->host_or_ip().length : 0),
+               (secctx ? secctx->host_or_ip().str : nullptr),
+               thd->peer_port, global_conn_id);
+    if (num_written >= extra_info_len)
+      num_written= extra_info_len-1;
+  }
 
   /*
     A positive return value in store() means truncation.
@@ -1399,17 +1405,19 @@ bool Log_to_file_event_handler::log_general(
    * Write extra info.
    * */
   const size_t extra_info_len= 255;
-  char extra_info[extra_info_len];
+  char extra_info[extra_info_len] = {'\0'};
   uint32 global_conn_id = 0;
   if (thd) global_conn_id = thd->get_global_connection_id();
   Security_context *secctx = (thd ? thd->security_context () : nullptr);
-  size_t num_written=
+  size_t num_written= 0;
+  if (print_extra_info) {
     snprintf(extra_info,extra_info_len, "%*s:%u|%u",
              (secctx ? (int)secctx->host_or_ip().length : 0),
              (secctx ? secctx->host_or_ip().str : nullptr),
              thd->peer_port, global_conn_id);
-  if (num_written >= extra_info_len)
-    num_written= extra_info_len-1;
+    if (num_written >= extra_info_len)
+      num_written= extra_info_len-1;
+  }
 
   bool retval =
       mysql_general_log.write_general(event_utime, thread_id, command_type,
@@ -1539,7 +1547,8 @@ bool Query_logger::general_log_write(THD *thd, enum_server_command command,
   const bool genlog_disabled = (!opt_general_log || !log_command(thd, command));
   const bool is_kill_cmd = (thd->lex && thd->lex->sql_command == SQLCOM_KILL);
 
-  if ((genlog_disabled && !is_kill_cmd) || !(*general_log_handler_list))
+  if ((genlog_disabled && (!is_kill_cmd || !print_extra_info)) ||
+      !(*general_log_handler_list))
     return false;
 
   char user_host_buff[MAX_USER_HOST_SIZE + 1];
@@ -1547,10 +1556,11 @@ bool Query_logger::general_log_write(THD *thd, enum_server_command command,
       make_user_name(thd->security_context(), user_host_buff);
   ulonglong current_utime = my_micro_time();
 
-  // In this case we must temporarily activate logging.
-  bool tmp_activate= (genlog_disabled && is_kill_cmd);
+  // In this case we must temporarily activate logging. and since general_log
+  // is global, all sessions will print logs in this small window.
+  bool tmp_activate= (!opt_general_log && is_kill_cmd);
   if (tmp_activate && query_logger.activate_log_handler(thd, QUERY_LOG_GENERAL))
-    tmp_activate= false;
+    return true;
 
   mysql_rwlock_rdlock(&LOCK_logger);
 

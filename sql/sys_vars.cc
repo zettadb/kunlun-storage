@@ -7868,11 +7868,12 @@ static Sys_var_enum Sys_terminology_use_previous(
 #ifndef NDEBUG
     Debug_shutdown_actions Debug_shutdown_actions::instance;
 #endif
+
 extern int print_extra_info;
 static Sys_var_int32 Sys_print_extra_info(
-    "print_extra_info",
-    "print extra info to help problem dignosis, including disconnection info,"
-    " newly added fields of log events, etc",
+    "print_extra_info_verbosity",
+    "Verbosity to print extra info to help problem dignosis, including disconnection info,"
+    " newly added fields of log events, etc. The bigger the more detailed/verbose info printed, 0 disables any verbose info to be printed.",
     GLOBAL_VAR(print_extra_info),
     CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(0, 100000), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD,
@@ -7896,3 +7897,18 @@ static Sys_var_long Sys_multi_purpose_int(
        VALID_RANGE(INT64_MIN, INT64_MAX), DEFAULT(0), BLOCK_SIZE(1),
        NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
 #endif
+ulong shard_id = 1;
+static Sys_var_ulong Sys_shard_id(
+    "shard_id",
+    "Kunlun cluster: The ID of the storage shard this server instance belongs to.",
+    READ_ONLY GLOBAL_VAR(shard_id), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, UINT_MAX32), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
+ulong cluster_id = 0;
+static Sys_var_ulong Sys_cluster_id(
+    "cluster_id",
+    "The ID of the Kunlun DBMS cluster this server instance belongs to.",
+    READ_ONLY GLOBAL_VAR(cluster_id), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, INT_MAX32), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));

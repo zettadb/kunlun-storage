@@ -144,6 +144,7 @@ bool iterate_all_dynamic_privileges(THD *thd,
                                     std::function<bool(const char *)> action);
 using std::max;
 using std::min;
+extern int print_extra_info;
 
 /**
   @class CSET_STRING

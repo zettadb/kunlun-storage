@@ -119,7 +119,8 @@ CREATE TABLE `general_log` (
   `thread_id` bigint(21) unsigned NOT NULL,
   `server_id` int(10) unsigned NOT NULL,
   `command_type` varchar(64) NOT NULL,
-  `argument` mediumblob NOT NULL
+  `argument` mediumblob NOT NULL,
+  `extra_info` VARCHAR(255) CHARACTER SET latin1 NOT NULL
 ) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log';
 
 CREATE TABLE `slow_log` (

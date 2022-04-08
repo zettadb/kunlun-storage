@@ -4257,7 +4257,7 @@ void Query_log_event::print_query_header(
     my_b_printf(file, "\t%s\tthread_id=%lu\texec_time=%lu\terror_code=%d%s%s\n",
                 get_type_str(), (ulong)thread_id, (ulong)exec_time, error_code,
                 xid_buf,
-                ((header()->flags & LOG_EVENT_DDL_F) && print_extra_info) ? "\tDDL" : "");
+                ((header()->flags & LOG_EVENT_DDL_F) && print_extra_info > 3) ? "\tDDL" : "");
   }
 
   if ((common_header->flags & LOG_EVENT_SUPPRESS_USE_F)) {
@@ -13040,7 +13040,7 @@ void Gtid_log_event::print(FILE *, PRINT_EVENT_INFO *print_event_info) const {
                 last_committed, sequence_number,
                 may_have_sbr_stmts ? "no" : "yes", original_commit_timestamp,
                 immediate_commit_timestamp, transaction_length,
-                ((header()->flags & LOG_EVENT_DDL_F) && print_extra_info) ? "\tDDL" : "");
+                ((header()->flags & LOG_EVENT_DDL_F) && print_extra_info > 3) ? "\tDDL" : "");
   }
 
   /*
@@ -13309,7 +13309,7 @@ int Gtid_log_event::do_apply_event(Relay_log_info const *rli) {
     If a slave has executed an event group and sql thread starts from an
     earlier position to replay, the executed txns won't be executed again.
   */
-  if (print_extra_info && state == GTID_STATEMENT_SKIP) {
+  if (print_extra_info > 2 && state == GTID_STATEMENT_SKIP) {
     char buf[Gtid::MAX_TEXT_LENGTH + 1];
     global_sid_lock->rdlock();
     thd->variables.gtid_next.to_string(global_sid_map, buf);

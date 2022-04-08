@@ -84,6 +84,7 @@ const char *XID_STATE::xa_state_names[] = {"NON-EXISTING", "ACTIVE", "IDLE",
 const char *strnchr(const char *str, char c, size_t n);
 Prepared_xa_txnids prepared_xa_txnids;
 extern int g_did_binlog_recovery;
+extern int print_extra_info;
 
 struct transaction_free_hash {
   void operator()(Transaction_ctx *) const;
@@ -508,9 +509,9 @@ abort_i:
                target_xid.xid_to_str(buf));
 #endif
         hton->rollback_by_xid(hton, &target_xid);
-        if (info->do_binlog_recovery() == false)
+        if (print_extra_info && info->do_binlog_recovery() == false)
         {
-          sql_print_error("FATAL ERROR: Aborting engine prepared transaction %s in normal recovery(not binlog recovery).",
+          sql_print_warning("Aborting engine prepared transaction %s in normal recovery(not binlog recovery), which is only expected at 1st startup of a cloned instance.",
               target_xid.xid_to_str(buf));
         }
       }
