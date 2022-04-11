@@ -23,7 +23,7 @@ CREATE TABLE t1 AS SELECT * FROM t0;
 FLUSH LOGS;
 SHOW MASTER STATUS;
 File	Position	Binlog_Do_DB	Binlog_Ignore_DB	Executed_Gtid_Set
-master-bin.000002	156			####
+master-bin.000002	164			####
 [connection slave]
 # Crash slave server when applying row event (the INSERT)
 SET global DEBUG='+d, crash_on_transactional_ddl_insert';

@@ -132,7 +132,11 @@ t1	CREATE TABLE `t1` (
   `INFO` longtext,
   `TIME_MS` bigint NOT NULL DEFAULT '0',
   `ROWS_SENT` bigint unsigned NOT NULL DEFAULT '0',
-  `ROWS_EXAMINED` bigint unsigned NOT NULL DEFAULT '0'
+  `ROWS_EXAMINED` bigint unsigned NOT NULL DEFAULT '0',
+  `PTHREAD_ID` bigint unsigned NOT NULL DEFAULT '0',
+  `THREAD_TID` int unsigned NOT NULL DEFAULT '0',
+  `GLOBAL_CONN_ID` int unsigned NOT NULL DEFAULT '0',
+  `COMP_NODE_ID` int unsigned NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3
 DROP TABLE t1;
 #########################################################

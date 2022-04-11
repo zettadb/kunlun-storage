@@ -1104,6 +1104,10 @@ Info
 Time_ms MASKED
 Rows_sent	0
 Rows_examined	0
+pthread_id	0
+thread_tid	0
+global_conn_id	0
+comp_node_id	0
 ---- 2. ----
 Id MASKED
 User	root
@@ -1116,6 +1120,10 @@ Info
 Time_ms MASKED
 Rows_sent	1
 Rows_examined	1
+pthread_id	0
+thread_tid	0
+global_conn_id	0
+comp_node_id	0
 ---- 3. ----
 Id MASKED
 User	root
@@ -1128,6 +1136,10 @@ Info	SHOW PROCESSLIST
 Time_ms MASKED
 Rows_sent	0
 Rows_examined	0
+pthread_id	0
+thread_tid	0
+global_conn_id	0
+comp_node_id	0
 ========================
 
 KILL QUERY 276447231;
@@ -1151,6 +1163,10 @@ Info
 Time_ms MASKED
 Rows_sent	0
 Rows_examined	0
+pthread_id	0
+thread_tid	0
+global_conn_id	0
+comp_node_id	0
 ---- 2. ----
 Id MASKED
 User	root
@@ -1163,6 +1179,10 @@ Info
 Time_ms MASKED
 Rows_sent	1
 Rows_examined	1
+pthread_id	0
+thread_tid	0
+global_conn_id	0
+comp_node_id	0
 ---- 3. ----
 Id MASKED
 User	root
@@ -1175,6 +1195,10 @@ Info	SHOW PROCESSLIST
 Time_ms MASKED
 Rows_sent	0
 Rows_examined	0
+pthread_id	0
+thread_tid	0
+global_conn_id	0
+comp_node_id	0
 ========================
 
 KILL QUERY 276447231;

@@ -20,14 +20,24 @@ binlog_encryption
 binlog_encryption
 binlog_rotate_encryption_master_key_at_startup
 binlog_rotate_encryption_master_key_at_startup
+clone_binlog_phy_consistency
+clone_binlog_phy_consistency
+cluster_id
+cluster_id
+computing_node_id
 cte_max_recursion_depth
 cte_max_recursion_depth
+ddc_mode
+ddc_mode
 default_collation_for_utf8mb4
 default_collation_for_utf8mb4
 disabled_storage_engines
 disabled_storage_engines
+disconnect_on_net_write_timeout
+disconnect_on_net_write_timeout
 generated_random_password_length
 generated_random_password_length
+global_conn_id
 group_replication_consistency
 group_replication_consistency
 init_replica
@@ -42,6 +52,8 @@ innodb_log_spin_cpu_pct_hwm
 innodb_log_spin_cpu_pct_hwm
 innodb_log_wait_for_flush_spin_hwm
 innodb_log_wait_for_flush_spin_hwm
+innodb_sleep_wait_for_free_block
+innodb_sleep_wait_for_free_block
 keyring_operations
 keyring_operations
 log_replica_updates
@@ -58,10 +70,14 @@ master_verify_checksum
 master_verify_checksum
 max_length_for_sort_data
 max_length_for_sort_data
+multi_purpose_int
+multi_purpose_int
 partial_revokes
 partial_revokes
 password_require_current
 password_require_current
+print_extra_info_verbosity
+print_extra_info_verbosity
 pseudo_slave_mode
 regexp_stack_limit
 regexp_stack_limit
@@ -112,6 +128,8 @@ select_into_disk_sync
 select_into_disk_sync
 select_into_disk_sync_delay
 select_into_disk_sync_delay
+shard_id
+shard_id
 skip_replica_start
 skip_replica_start
 skip_slave_start
@@ -165,5 +183,7 @@ tls_ciphersuites
 tls_version
 tls_version
 use_secondary_engine
+xa_prep_cop_binlog_last
+xa_prep_cop_binlog_last
 drop table t1;
 drop table t2;

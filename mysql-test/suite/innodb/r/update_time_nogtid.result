@@ -2,7 +2,6 @@
 # Test that INFORMATION_SCHEMA.TABLES.UPDATE_TIME is filled
 # correctly for InnoDB tables.
 #
-include/rpl_set_gtid_mode.inc [ON on servers 1]
 CREATE TABLE t (a INT) ENGINE=INNODB;
 ANALYZE TABLE t;
 Table	Op	Msg_type	Msg_text
@@ -31,8 +30,8 @@ WHERE table_name = '`test`.`t`';
 COUNT(*)
 1
 # Emptying InnoDB buffer pool: begin
-# Buffer pool size: 10485760 bytes
-# Creating and dropping a table with size: 20971520 bytes
+# Buffer pool size: 25165824 bytes
+# Creating and dropping a table with size: 50331648 bytes
 # Emptying InnoDB buffer pool: end
 SELECT COUNT(*) FROM information_schema.innodb_buffer_page
 WHERE table_name = '`test`.`t`';
@@ -52,7 +51,6 @@ XA END 'xatrx';
 XA PREPARE 'xatrx';
 call mtr.add_suppression("Found 1 prepared XA transactions");
 # Kill and restart
-include/rpl_set_gtid_mode.inc [ON on servers 1]
 xa recover;
 formatID	gtrid_length	bqual_length	data
 1	5	0	xatrx
@@ -71,4 +69,3 @@ AND update_time IS NOT NULL OR FALSE;
 COUNT(*)
 1
 DROP TABLE t;
-include/rpl_set_gtid_mode.inc [OFF on servers 1]

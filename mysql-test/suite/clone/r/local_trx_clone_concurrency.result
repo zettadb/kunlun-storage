@@ -1,0 +1,304 @@
+include/rpl_set_gtid_mode.inc [ON on servers 1]
+call mtr.add_suppression("\\[Warning\\] .*MY-\\d+.* \\[Server\\] Found 1 prepared XA transactions");
+set global clone_binlog_phy_consistency = false;
+INSTALL PLUGIN clone SONAME 'CLONE_PLUGIN';
+create table t1(a int);
+insert into t1 values(1);
+begin;
+insert into t1 values(2),(3);
+commit;
+xa start 'a1';
+insert into t1 values(4),(5);
+xa end 'a1';
+xa commit 'a1' one phase;
+xa start 'a2';
+insert into t1 values(6),(7);
+xa end 'a2';
+xa prepare 'a2';
+xa commit 'a2';
+select*from t1;
+a
+1
+2
+3
+4
+5
+6
+7
+# In connection con0
+xa start 'a3';
+insert into t1 values(8);
+xa end 'a3';
+xa prepare 'a3';
+## Test: Clone with XA transactions
+# In connection con1 - Start XA COP
+XA start 'xa_trx_1';
+insert into t1 values(9);
+XA end 'xa_trx_1';
+SET DEBUG_SYNC = 'bgc_before_flush_stage SIGNAL start_clone1 WAIT_FOR resume_txns1 NO_CLEAR_EVENT';
+XA commit 'xa_trx_1' one phase;;
+# In connection con2
+begin;
+insert into t1 values(10),(11);
+SET DEBUG_SYNC = 'bgc_before_flush_stage SIGNAL start_clone2 WAIT_FOR resume_txns1 NO_CLEAR_EVENT';
+commit;;
+# In connection con3
+SET DEBUG_SYNC = 'bgc_before_flush_stage SIGNAL start_clone3 WAIT_FOR resume_txns1 NO_CLEAR_EVENT';
+insert into t1 values(12),(13);;
+# In connection con4
+XA start 'xa_trx_2';
+insert into t1 values(14),(15);
+XA end 'xa_trx_2';
+SET DEBUG_SYNC = 'bgc_before_flush_stage SIGNAL start_clone4 WAIT_FOR resume_txns1 NO_CLEAR_EVENT';
+XA prepare 'xa_trx_2';;
+# In connection con6
+XA start 'xa_trx_4';
+insert into t1 values(18),(19);
+XA end 'xa_trx_4';
+XA prepare 'xa_trx_4';
+SET DEBUG_SYNC = 'now SIGNAL start_clone5';
+# In connection default - Start Cloning database
+SET DEBUG_SYNC = 'now WAIT_FOR start_clone1';
+SET DEBUG_SYNC = 'now WAIT_FOR start_clone2';
+SET DEBUG_SYNC = 'now WAIT_FOR start_clone3';
+SET DEBUG_SYNC = 'now WAIT_FOR start_clone4';
+SET DEBUG_SYNC = 'now WAIT_FOR start_clone5';
+SET DEBUG_SYNC = 'clone_before_stop_redo_archiving SIGNAL exec_more_txns WAIT_FOR resume_clone1';
+SET DEBUG_SYNC = 'clone_before_stop_redo_archiving SIGNAL exec_more_txns WAIT_FOR resume_clone2';
+SET DEBUG_SYNC = 'clone_before_stop_redo_archiving SIGNAL exec_more_txns WAIT_FOR resume_clone3';
+SET DEBUG_SYNC = 'clone_before_stop_redo_archiving SIGNAL exec_more_txns WAIT_FOR resume_clone4';
+SET DEBUG_SYNC = 'clone_before_stop_redo_archiving SIGNAL exec_more_txns WAIT_FOR resume_clone5';
+SET GLOBAL clone_autotune_concurrency = OFF;
+SET GLOBAL clone_max_concurrency = 8;
+CLONE LOCAL DATA DIRECTORY = 'CLONE_DATADIR';
+SET DEBUG_SYNC = 'now WAIT_FOR exec_more_txns NO_CLEAR_EVENT';
+insert into t1 values(21);
+begin;
+insert into t1 values(22),(23);
+commit;
+xa start 'b1';
+insert into t1 values(24),(25);
+xa end 'b1';
+xa commit 'b1' one phase;
+xa start 'b2';
+insert into t1 values(26),(27);
+xa end 'b2';
+xa prepare 'b2';
+xa commit 'b2';
+# In connection con8
+SET DEBUG_SYNC = 'now WAIT_FOR exec_more_txns NO_CLEAR_EVENT';
+XA start 'xa_trx_5';
+insert into t1 values(29);
+XA end 'xa_trx_5';
+SET DEBUG_SYNC = 'bgc_before_flush_stage SIGNAL resume_clone1 WAIT_FOR resume_txns2 NO_CLEAR_EVENT';
+XA commit 'xa_trx_5' one phase;;
+# In connection con9
+SET DEBUG_SYNC = 'now WAIT_FOR exec_more_txns NO_CLEAR_EVENT';
+begin;
+insert into t1 values(30),(31);
+SET DEBUG_SYNC = 'bgc_before_flush_stage SIGNAL resume_clone2 WAIT_FOR resume_txns2 NO_CLEAR_EVENT';
+commit;;
+# In connection con10
+SET DEBUG_SYNC = 'now WAIT_FOR exec_more_txns NO_CLEAR_EVENT';
+SET DEBUG_SYNC = 'bgc_before_flush_stage SIGNAL resume_clone3 WAIT_FOR resume_txns2 NO_CLEAR_EVENT';
+insert into t1 values(32),(33);;
+# In connection con11
+SET DEBUG_SYNC = 'now WAIT_FOR exec_more_txns NO_CLEAR_EVENT';
+XA start 'xa_trx_6';
+insert into t1 values(34),(35);
+XA end 'xa_trx_6';
+SET DEBUG_SYNC = 'bgc_before_flush_stage SIGNAL resume_clone4 WAIT_FOR resume_txns2 NO_CLEAR_EVENT';
+XA prepare 'xa_trx_6';;
+# In connection con13
+SET DEBUG_SYNC = 'now WAIT_FOR exec_more_txns NO_CLEAR_EVENT';
+XA start 'xa_trx_8';
+insert into t1 values(38),(39);
+XA end 'xa_trx_8';
+XA prepare 'xa_trx_8';
+SET DEBUG_SYNC = 'now SIGNAL resume_clone5';
+# In connection default - Finish Cloning database
+SET DEBUG_SYNC = 'now SIGNAL resume_txns1';
+SET DEBUG_SYNC = 'now SIGNAL resume_txns2';
+# In connection con1 - Finish txn commit/prepare
+# In connection con2 - Finish txn commit/prepare
+# In connection con3 - Finish txn commit/prepare
+# In connection con4 - Finish txn commit/prepare
+# In connection con8 - Finish txn commit/prepare
+# In connection con9 - Finish txn commit/prepare
+# In connection con10 - Finish txn commit/prepare
+# In connection con11 - Finish txn commit/prepare
+# In connection default
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	8	0	xa_trx_8
+1	8	0	xa_trx_6
+1	8	0	xa_trx_4
+1	8	0	xa_trx_2
+1	2	0	a3
+select*from t1;
+a
+1
+2
+3
+4
+5
+6
+7
+9
+10
+11
+12
+13
+21
+22
+23
+24
+25
+26
+27
+29
+30
+31
+32
+33
+xa commit 'xa_trx_4';
+#restart donor
+# restart:
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	a3
+1	8	0	xa_trx_2
+1	8	0	xa_trx_6
+1	8	0	xa_trx_8
+select*from t1;
+a
+1
+2
+3
+4
+5
+6
+7
+9
+10
+11
+12
+13
+18
+19
+21
+22
+23
+24
+25
+26
+27
+29
+30
+31
+32
+33
+# Restart using cloned database datadir
+# restart: --datadir=CLONE_DATADIR
+include/rpl_set_gtid_mode.inc [ON on servers 1]
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+SELECT * from t1;
+a
+1
+2
+3
+4
+5
+6
+7
+21
+22
+23
+24
+25
+26
+27
+# expected: xa_trx_4/8, a3
+XA recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	a3
+1	8	0	xa_trx_2
+1	8	0	xa_trx_4
+1	8	0	xa_trx_6
+1	8	0	xa_trx_8
+xa commit 'xa_trx_4';
+xa commit 'xa_trx_8';
+xa commit 'a3';
+SELECT * from t1;
+a
+1
+2
+3
+4
+5
+6
+7
+8
+18
+19
+21
+22
+23
+24
+25
+26
+27
+38
+39
+# restart:
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	a3
+1	8	0	xa_trx_2
+1	8	0	xa_trx_6
+1	8	0	xa_trx_8
+xa commit 'xa_trx_2';
+xa commit 'xa_trx_6';
+xa commit 'xa_trx_8';
+xa rollback 'a3';
+select*from t1;
+a
+1
+2
+3
+4
+5
+6
+7
+9
+10
+11
+12
+14
+13
+15
+18
+19
+21
+22
+23
+24
+25
+26
+27
+29
+30
+31
+32
+34
+33
+35
+38
+39
+drop table t1;
+UNINSTALL PLUGIN clone;
+SET DEBUG_SYNC = 'RESET';
