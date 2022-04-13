@@ -817,6 +817,7 @@ extern bool my_init_dynamic_array(DYNAMIC_ARRAY *array, PSI_memory_key key,
 extern bool insert_dynamic(DYNAMIC_ARRAY *array, const void *element);
 extern void *alloc_dynamic(DYNAMIC_ARRAY *array);
 extern void delete_dynamic(DYNAMIC_ARRAY *array);
+extern void *pop_dynamic(DYNAMIC_ARRAY *);
 
 extern bool init_dynamic_string(DYNAMIC_STRING *str, const char *init_str,
                                 size_t init_alloc);
