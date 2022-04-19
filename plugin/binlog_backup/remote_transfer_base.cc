@@ -1,6 +1,6 @@
 #include "remote_transfer_base.h"
 #include <sys/types.h>
-namespace kunlun {
+namespace BinlogBackupPlugin {
 
 RemoteFileBase::RemoteFileBase() { m_fd_ = -1; }
 RemoteFileBase::~RemoteFileBase() {}
@@ -15,4 +15,4 @@ size_t RemoteFileBase::RemoteWriteByte(unsigned char *buffer, size_t count) {
   return WriteByteImpl(m_fd_, buffer, count);
 }
 
-} // namespace kunlun
+}  // namespace BinlogBackupPlugin

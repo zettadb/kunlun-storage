@@ -21,6 +21,7 @@
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
 MYSQL_ADD_PLUGIN(binlog_backup
+  biodirectpopen.cc
   hdfs_transfer.cc
   remote_transfer_base.cc
   binlog_backup.cc

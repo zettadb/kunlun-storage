@@ -1,15 +1,16 @@
 #ifndef _HDFS_TRANSFER_H_
 #define _HDFS_TRANSFER_H_
 
+#include <string>
 #include "errorcup.h"
 #include "remote_transfer_base.h"
-#include <string>
-namespace kunlun {
-class HdfsFile : public RemoteFileBase {
+#include "biodirectpopen.h"
+namespace BinlogBackupPlugin {
+class HdfsFile : public BinlogBackupPlugin::RemoteFileBase {
   typedef int fd_t;
 
-public:
-  HdfsFile(const char *,const char *);
+ public:
+  HdfsFile(const char *, const char *);
   ~HdfsFile() override;
 
   /**
@@ -21,16 +22,15 @@ public:
   virtual int OpenFd() override final;
   virtual void TearDown() override final;
   virtual size_t WriteByteImpl(fd_t, unsigned char *, size_t) override final;
-  virtual void setRemoteFileName(const char *,const char *) override;
+  virtual void setRemoteFileName(const char *, const char *) override;
 
-
-
-private:
+ private:
   std::string m_cluster_name_;
   std::string m_shard_name_;
   FILE *m_hdfs_file_ptr_;
+  BiodirectPopen *biopopen_;
 };
 
-} // namespace kunlun
+}  // namespace BinlogBackupPlugin
 
 #endif /*_HDFS_TRANSFER_H_*/

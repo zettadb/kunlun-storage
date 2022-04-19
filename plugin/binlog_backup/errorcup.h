@@ -1,12 +1,12 @@
 #ifndef _ERR_CUP_H_
 #define _ERR_CUP_H_
 
-#include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
-namespace kunlun {
+#include <string.h>
+namespace BinlogBackupPlugin {
 class ErrorCup {
-public:
+ public:
   ErrorCup() { bzero(m_errbuf_, 4096); }
   int setErr(const char *fmt, ...) __attribute__((format(printf, 2, 3))) {
     va_list arg;
@@ -21,9 +21,9 @@ public:
 
   void removeErr() { m_errbuf_[0] = '\0'; }
 
-private:
+ private:
   char m_errbuf_[4096];
 };
-} // namespace kunlun
+}  // namespace BinlogBackupPlugin
 
 #endif /* _ERR_CUP_H_ */

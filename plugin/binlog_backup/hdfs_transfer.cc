@@ -5,27 +5,34 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-using namespace kunlun;
+using namespace BinlogBackupPlugin;
 
 HdfsFile::HdfsFile(const char *cluster_id, const char *shard_id)
-    : m_cluster_name_(cluster_id), m_shard_name_(shard_id),
-      m_hdfs_file_ptr_(nullptr) {
+    : m_cluster_name_(cluster_id),
+      m_shard_name_(shard_id),
+      m_hdfs_file_ptr_(nullptr),
+      biopopen_(nullptr) {
   m_remote_fname_ = "";
 }
 
 HdfsFile::~HdfsFile() {
-  if (m_hdfs_file_ptr_ != NULL) {
+  if (m_hdfs_file_ptr_ != nullptr) {
     // watch out the zombie proc
-    pclose(m_hdfs_file_ptr_);
-    m_hdfs_file_ptr_ = NULL;
+    // pclose(m_hdfs_file_ptr_);
+    delete biopopen_;
+    m_hdfs_file_ptr_ = nullptr;
   }
 }
 
 void HdfsFile::TearDown() {
-  if (m_hdfs_file_ptr_ != NULL) {
+  if (biopopen_ != nullptr) {
+    delete biopopen_;
+    biopopen_ = nullptr;
+  }
+  if (m_hdfs_file_ptr_ != nullptr) {
     // watch out the zombie proc
-    pclose(m_hdfs_file_ptr_);
-    m_hdfs_file_ptr_ = NULL;
+    // pclose(m_hdfs_file_ptr_);
+    m_hdfs_file_ptr_ = nullptr;
   }
 }
 
@@ -57,12 +64,27 @@ void HdfsFile::setRemoteFileName(const char *binlog_file_name,
 
 int HdfsFile::OpenFd() {
   // TODO: dynamic string buffer needed.
-  char buf[2048] = {'\0'};
+  char buf[8192] = {'\0'};
   snprintf(buf, sizeof(buf) - 1, "lz4 -B4 | hadoop  fs -put -p -f - %s",
            m_remote_fname_.c_str());
   // TODO: biodirection popen-like API needed.
-  m_hdfs_file_ptr_ = popen(buf, "w");
-  if (m_hdfs_file_ptr_ == NULL) {
+  biopopen_ = new BiodirectPopen(buf);
+  biopopen_->set_block(false);
+  bool ret = biopopen_->Launch("wr");
+  if (!ret) {
+    setErr("%s", biopopen_->getErr());
+    return -1;
+  }
+  //FILE *stderr_fp = biopopen_->getReadStdErrFp();
+  //char buffer[2048];
+  //if (fgets(buffer, 2048, stderr_fp) != nullptr) {
+  //  setErr("stderr: %s, return code: %d", buffer,
+  //         biopopen_->get_chiled_status());
+  //  return -1;
+  //}
+
+  m_hdfs_file_ptr_ = biopopen_->getWriteFp();
+  if (m_hdfs_file_ptr_ == nullptr) {
     setErr("popen() failed, errno: %d, errmsg: %s", errno, strerror(errno));
     return -1;
   }

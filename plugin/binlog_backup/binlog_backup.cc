@@ -21,73 +21,83 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
+#define LOG_COMPONENT_TAG "binlog_backup"
 #include <ctype.h>
 #include <fcntl.h>
-#include <fstream>
 #include <mysql/components/my_service.h>
+#include <mysql/components/services/log_builtins.h>
 #include <mysql/plugin.h>
 #include <mysql_version.h>
-#include <sstream>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string>
 #include <time.h>
+#include <fstream>
+#include <sstream>
+#include <string>
 
 #include "hdfs_transfer.h"
-#include "m_string.h" // strlen
+#include "m_string.h"  // strlen
 #include "my_dbug.h"
 #include "my_dir.h"
 #include "my_inttypes.h"
 #include "my_io.h"
 #include "my_psi_config.h"
-#include "my_sys.h" // my_write, my_malloc
+#include "my_sys.h"  // my_write, my_malloc
 #include "my_thread.h"
 #include "mysql/psi/mysql_memory.h"
 #include "remote_transfer_base.h"
-#include "sql/binlog.h"     // log_bin_basename, log_bin_index
-#include "sql/mysqld.h"     // my_bind_addr_str, mysqld_port
-#include "sql/sql_plugin.h" // st_plugin_int
+#include "sql/binlog.h"      // log_bin_basename, log_bin_index
+#include "sql/mysqld.h"      // my_bind_addr_str, mysqld_port
+#include "sql/sql_plugin.h"  // st_plugin_int
 
-using namespace kunlun;
+using namespace BinlogBackupPlugin;
 // confirm `buffer` is declared in the invoking context.
-#define ErrorPluginLog(logfile, format, args...)                               \
-  {                                                                            \
-    const char *prefix = "[ ERROR ] ";                                         \
-    my_write((logfile), (const uchar *)prefix, sizeof(prefix), MYF(0));        \
-    size_t msg_len = snprintf(buffer, sizeof(buffer), format, args);           \
-    my_write((logfile), (uchar *)buffer, msg_len, MYF(0));                     \
-    buffer[0] = '\0';                                                          \
+/*
+//#define ErrorPluginLog(logfile, format, args...)                        \
+//  {                                                                     \
+//    const char *prefix = "[ ERROR ] ";                                  \
+//    my_write((logfile), (const uchar *)prefix, strlen(prefix), MYF(0)); \
+//    size_t msg_len = snprintf(buffer, sizeof(buffer), format, args);    \
+//    my_write((logfile), (uchar *)buffer, msg_len, MYF(0));              \
+//    LogPluginErr(ERROR_LEVEL, ER_KEYRING_LOGGER_ERROR_MSG, buffer);     \
+//    buffer[0] = '\0';                                                   \
+//  }
+//
+//#define InfoPluginLog(logfile, format, args...)                           \
+//  {                                                                       \
+//    const char *prefix = "[ INFO ] ";                                     \
+//    my_write((logfile), (const uchar *)prefix, strlen(prefix), MYF(0));   \
+//    size_t msg_len = snprintf(buffer, sizeof(buffer), format, args);      \
+//    my_write((logfile), (uchar *)buffer, msg_len, MYF(0));                \
+//    LogPluginErr(INFORMATION_LEVEL, ER_KEYRING_LOGGER_ERROR_MSG, buffer); \
+//    buffer[0] = '\0';                                                     \
+//  }
+*/
+#define ErrorPluginLog(logfile, format, args...)                    \
+  {                                                                 \
+    snprintf(buffer, sizeof(buffer), format, args);                 \
+    LogPluginErr(ERROR_LEVEL, ER_KEYRING_LOGGER_ERROR_MSG, buffer); \
+    buffer[0] = '\0';                                               \
   }
 
-#define InfoPluginLog(logfile, format, args...)                                \
-  {                                                                            \
-    const char *prefix = "[ INFO ] ";                                          \
-    my_write((logfile), (const uchar *)prefix, sizeof(prefix), MYF(0));        \
-    size_t msg_len = snprintf(buffer, sizeof(buffer), format, args);           \
-    my_write((logfile), (uchar *)buffer, msg_len, MYF(0));                     \
-    buffer[0] = '\0';                                                          \
+#define InfoPluginLog(logfile, format, args...)                           \
+  {                                                                       \
+    snprintf(buffer, sizeof(buffer), format, args);                       \
+    LogPluginErr(INFORMATION_LEVEL, ER_KEYRING_LOGGER_ERROR_MSG, buffer); \
+    buffer[0] = '\0';                                                     \
   }
 
-#define DebugPluginLog(logfile, msg)                                           \
-  {                                                                            \
-    const char *prefix = "[ DBUG ] ";                                          \
-    my_write((logfile), (const uchar *)prefix, sizeof(prefix), MYF(0));        \
-    size_t msg_len = snprintf(buffer, sizeof(buffer), format, args);           \
-    my_write((logfile), (uchar *)buffer, msg_len, MYF(0));                     \
-    buffer[0] = '\0';                                                          \
+#define WriteBackupState(statefile, msg)                              \
+  {                                                                   \
+    size_t msg_len = snprintf(buffer, sizeof(buffer), "%s\n", (msg)); \
+    my_write((statefile), (uchar *)buffer, msg_len, MYF(0));          \
+    buffer[0] = '\0';                                                 \
   }
 
-#define WriteBackupState(statefile, msg)                                       \
-  {                                                                            \
-    size_t msg_len = snprintf(buffer, sizeof(buffer), "%s\n", (msg));          \
-    my_write((statefile), (uchar *)buffer, msg_len, MYF(0));                   \
-    buffer[0] = '\0';                                                          \
-  }
-
-#define WAIT_CONTINUE(seconds)                                                 \
-  {                                                                            \
-    sleep((seconds));                                                          \
-    continue;                                                                  \
+#define WAIT_CONTINUE(seconds) \
+  {                            \
+    sleep((seconds));          \
+    continue;                  \
   }
 
 PSI_memory_key key_memory_mysql_binlog_backup_context;
@@ -107,11 +117,11 @@ static void init_binlog_backup_psi_keys() {
 }
 #endif /* HAVE_PSI_INTERFACE */
 
-#define RUNTIME_STRING_BUFFER 2048
+#define RUNTIME_STRING_BUFFER 8192
 
-static char plugin_log_filename[FN_REFLEN];
+// static char plugin_log_filename[FN_REFLEN];
 static char backup_state_filename[FN_REFLEN];
-static char binlog_machine_info[FN_REFLEN]; // _192#168#0#135_8001_
+static char binlog_machine_info[FN_REFLEN];  // _192#168#0#135_8001_
 static std::string log_place_holder = "";
 
 enum REMOTE_STORAGE_TYPE { HDFS = 0, ANONYMOUS };
@@ -119,6 +129,7 @@ static const char *cluster_id = nullptr;
 static const char *shard_id = nullptr;
 static char *member_state = nullptr;
 static char *member_role = nullptr;
+static bool binlog_backup_open_mode;
 
 struct mysql_binlog_backup_context {
   my_thread_handle binlog_backup_thread;
@@ -127,7 +138,7 @@ struct mysql_binlog_backup_context {
   File backup_state_file;
   RemoteFileBase *rfbpt;
   REMOTE_STORAGE_TYPE storage_type;
-  void *p; // for srv_session_init_thd
+  void *p;  // for srv_session_init_thd
 };
 static std::string binlog_fn = "";
 
@@ -156,13 +167,13 @@ static int sql_get_date(void *, const MYSQL_TIME *) { return false; }
 static int sql_get_time(void *, const MYSQL_TIME *, uint) { return false; }
 static int sql_get_datetime(void *, const MYSQL_TIME *, uint) { return false; }
 static void sql_handle_ok(void *, uint, uint, ulonglong, ulonglong,
-                          const char *const){}
-static void sql_shutdown(void *, int){}
+                          const char *const) {}
+static void sql_shutdown(void *, int) {}
 
 static int sql_handle_store_string(void *p, const char *const value,
                                    size_t length, const CHARSET_INFO *const) {
   DBUG_TRACE;
-  struct mysql_binlog_backup_context *ctx =
+  struct mysql_binlog_backup_context *MY_ATTRIBUTE((unused)) ctx =
       (struct mysql_binlog_backup_context *)p;
 
   char buffer[RUNTIME_STRING_BUFFER];
@@ -277,46 +288,46 @@ static void set_query_in_com_data(union COM_DATA *cmd, const char *query) {
 
 static void print_cmd(enum_server_command cmd, COM_DATA *data, void *p) {
   char buffer[RUNTIME_STRING_BUFFER];
-  struct mysql_binlog_backup_context *con =
+  struct mysql_binlog_backup_context *MY_ATTRIBUTE((unused)) con =
       (struct mysql_binlog_backup_context *)p;
   switch (cmd) {
-  case COM_INIT_DB:
-    InfoPluginLog(con->plugin_log_file, "COM_INIT_DB: db_name[%s]\n",
-                  data->com_init_db.db_name);
-    break;
-  case COM_QUERY:
-    InfoPluginLog(con->plugin_log_file, "COM_QUERY: query[%s]\n",
-                  data->com_query.query);
-    break;
-  case COM_STMT_PREPARE:
-    InfoPluginLog(con->plugin_log_file, "COM_STMT_PREPARE: query[%s]\n",
-                  data->com_stmt_prepare.query);
-    break;
-  case COM_STMT_EXECUTE:
-    InfoPluginLog(con->plugin_log_file, "COM_STMT_EXECUTE: stmt_id [%lu]\n",
-                  data->com_stmt_execute.stmt_id);
-    break;
-  case COM_STMT_SEND_LONG_DATA:
-    InfoPluginLog(con->plugin_log_file,
-                  "COM_STMT_SEND_LONG_DATA: stmt_id [%lu]\n",
-                  data->com_stmt_send_long_data.stmt_id);
-    break;
-  case COM_STMT_CLOSE:
-    InfoPluginLog(con->plugin_log_file, "COM_STMT_CLOSE: stmt_id [%u]\n",
-                  data->com_stmt_close.stmt_id);
-    break;
-  case COM_STMT_RESET:
-    InfoPluginLog(con->plugin_log_file, "COM_STMT_RESET: stmt_id [%u]\n",
-                  data->com_stmt_reset.stmt_id);
-    break;
-  case COM_STMT_FETCH:
-    InfoPluginLog(con->plugin_log_file, "COM_STMT_FETCH: stmt_id [%lu]\n",
-                  data->com_stmt_fetch.stmt_id);
-    break;
-  default:
-    InfoPluginLog(con->plugin_log_file,
-                  "NOT FOUND: add command to print_cmd%s\n",
-                  log_place_holder.c_str());
+    case COM_INIT_DB:
+      InfoPluginLog(con->plugin_log_file, "COM_INIT_DB: db_name[%s]\n",
+                    data->com_init_db.db_name);
+      break;
+    case COM_QUERY:
+      InfoPluginLog(con->plugin_log_file, "COM_QUERY: query[%s]\n",
+                    data->com_query.query);
+      break;
+    case COM_STMT_PREPARE:
+      InfoPluginLog(con->plugin_log_file, "COM_STMT_PREPARE: query[%s]\n",
+                    data->com_stmt_prepare.query);
+      break;
+    case COM_STMT_EXECUTE:
+      InfoPluginLog(con->plugin_log_file, "COM_STMT_EXECUTE: stmt_id [%lu]\n",
+                    data->com_stmt_execute.stmt_id);
+      break;
+    case COM_STMT_SEND_LONG_DATA:
+      InfoPluginLog(con->plugin_log_file,
+                    "COM_STMT_SEND_LONG_DATA: stmt_id [%lu]\n",
+                    data->com_stmt_send_long_data.stmt_id);
+      break;
+    case COM_STMT_CLOSE:
+      InfoPluginLog(con->plugin_log_file, "COM_STMT_CLOSE: stmt_id [%u]\n",
+                    data->com_stmt_close.stmt_id);
+      break;
+    case COM_STMT_RESET:
+      InfoPluginLog(con->plugin_log_file, "COM_STMT_RESET: stmt_id [%u]\n",
+                    data->com_stmt_reset.stmt_id);
+      break;
+    case COM_STMT_FETCH:
+      InfoPluginLog(con->plugin_log_file, "COM_STMT_FETCH: stmt_id [%lu]\n",
+                    data->com_stmt_fetch.stmt_id);
+      break;
+    default:
+      InfoPluginLog(con->plugin_log_file,
+                    "NOT FOUND: add command to print_cmd%s\n",
+                    log_place_holder.c_str());
   }
 }
 
@@ -325,10 +336,10 @@ static void switch_user(MYSQL_SESSION session) {
   thd_get_security_context(srv_session_info_get_thd(session), &sc);
   security_context_lookup(sc, "root", "127.0.0.1", "localhost", "kunlun_sysdb");
 }
-static void
-run_cmd(MYSQL_SESSION session, enum_server_command cmd, COM_DATA *data,
-        struct mysql_binlog_backup_context *ctx MY_ATTRIBUTE((unused)),
-        void *p MY_ATTRIBUTE((unused))) {
+static void run_cmd(
+    MYSQL_SESSION session, enum_server_command cmd, COM_DATA *data,
+    struct mysql_binlog_backup_context *ctx MY_ATTRIBUTE((unused)),
+    void *p MY_ATTRIBUTE((unused))) {
   char buffer[RUNTIME_STRING_BUFFER];
   enum cs_text_or_binary txt_or_bin = CS_TEXT_REPRESENTATION;
   struct mysql_binlog_backup_context *con =
@@ -346,91 +357,91 @@ run_cmd(MYSQL_SESSION session, enum_server_command cmd, COM_DATA *data,
                 log_place_holder.c_str());
 }
 
-static void binlog_flush_thread_clean_func(void *p) {
-  MYSQL_SESSION session = (MYSQL_SESSION)p;
-  /* Close session: Must pass */
-  srv_session_close(session);
-  srv_session_deinit_thread();
-}
+//static void binlog_flush_thread_clean_func(void *p) {
+//  MYSQL_SESSION session = (MYSQL_SESSION)p;
+//  /* Close session: Must pass */
+//  srv_session_close(session);
+//  srv_session_deinit_thread();
+//}
 
-static bool timesup() {
-  time_t t = time(NULL);
-  struct tm tm;
+//static bool timesup() {
+//  time_t t = time(NULL);
+//  struct tm tm;
+//
+//  // fetch dawn time stamp
+//  localtime_r(&t, &tm);
+//  tm.tm_hour = 0;
+//  tm.tm_min = 0;
+//  tm.tm_sec = 0;
+//  unsigned int dawn_stamp = mktime(&tm);
+//
+//  // renew current time stamp
+//  localtime_r(&t, &tm);
+//  unsigned int current_stamp = mktime(&tm);
+//
+//  int sub = current_stamp - dawn_stamp;
+//  if (sub >= 0 && sub <= 5) {
+//    return true;
+//  }
+//  return false;
+//}
 
-  // fetch dawn time stamp
-  localtime_r(&t, &tm);
-  tm.tm_hour = 0;
-  tm.tm_min = 0;
-  tm.tm_sec = 0;
-  unsigned int dawn_stamp = mktime(&tm);
-
-  // renew current time stamp
-  localtime_r(&t, &tm);
-  unsigned int current_stamp = mktime(&tm);
-
-  int sub = current_stamp - dawn_stamp;
-  if (sub >= 0 && sub <= 5) {
-    return true;
-  }
-  return false;
-}
-
-static void *mysql_binlog_flush_interval(void *p) {
-  DBUG_TRACE;
-  struct mysql_binlog_backup_context *con =
-      (struct mysql_binlog_backup_context *)p;
-  char buffer[RUNTIME_STRING_BUFFER];
-  MYSQL_SESSION session = nullptr;
-  COM_DATA cmd;
-
-  /* push the clean handler */
-  pthread_cleanup_push(binlog_flush_thread_clean_func, (void *)session);
-
-  while (srv_session_init_thread(con->p)) {
-    ErrorPluginLog(con->plugin_log_file,
-                   "[binlog_flush_interval] init srv session faildi%s\n",
-                   log_place_holder.c_str());
-    WAIT_CONTINUE(3);
-  }
-  /* Open session: Must pass */
-  InfoPluginLog(con->plugin_log_file,
-                "[binlog_flush_interval] [thd_srv_session_open]%s\n",
-                log_place_holder.c_str());
-  session = srv_session_open(NULL, NULL);
-  while (!session) {
-    ErrorPluginLog(
-        con->plugin_log_file,
-        "[binlog_flush_interval] srv_session_open failed,will retry%s\n",
-        log_place_holder.c_str());
-    session = srv_session_open(NULL, NULL);
-    WAIT_CONTINUE(3);
-  }
-  InfoPluginLog(con->plugin_log_file, "srv_session_open successfully%s\n",
-                log_place_holder.c_str());
-  switch_user(session);
-  // init db
-  cmd.com_init_db.db_name = "mysql";
-  cmd.com_init_db.length = strlen("mysql");
-  run_cmd(session, COM_INIT_DB, &cmd, nullptr, p);
-
-  char stmt_buffer[512] = {'\0'};
-
-  while (1) {
-    if (timesup()) {
-      // flush logs
-      sprintf(stmt_buffer, "FLUSH LOGS");
-      set_query_in_com_data(&cmd, stmt_buffer);
-      run_cmd(session, COM_QUERY, &cmd, nullptr, p);
-      memset(stmt_buffer, 0, sizeof(stmt_buffer));
-    }
-    sleep(3);
-  }
-  pthread_cleanup_pop(0);
-  return 0;
-}
+//static void * mysql_binlog_flush_interval(void *p) {
+//  DBUG_TRACE;
+//  struct mysql_binlog_backup_context *con =
+//      (struct mysql_binlog_backup_context *)p;
+//  char buffer[RUNTIME_STRING_BUFFER];
+//  MYSQL_SESSION session = nullptr;
+//  COM_DATA cmd;
+//
+//  /* push the clean handler */
+//  pthread_cleanup_push(binlog_flush_thread_clean_func, (void *)session);
+//
+//  while (srv_session_init_thread(con->p)) {
+//    ErrorPluginLog(con->plugin_log_file,
+//                   "[binlog_flush_interval] init srv session faildi%s\n",
+//                   log_place_holder.c_str());
+//    WAIT_CONTINUE(3);
+//  }
+//  /* Open session: Must pass */
+//  InfoPluginLog(con->plugin_log_file,
+//                "[binlog_flush_interval] [thd_srv_session_open]%s\n",
+//                log_place_holder.c_str());
+//  session = srv_session_open(NULL, NULL);
+//  while (!session) {
+//    ErrorPluginLog(
+//        con->plugin_log_file,
+//        "[binlog_flush_interval] srv_session_open failed,will retry%s\n",
+//        log_place_holder.c_str());
+//    session = srv_session_open(NULL, NULL);
+//    WAIT_CONTINUE(3);
+//  }
+//  InfoPluginLog(con->plugin_log_file, "srv_session_open successfully%s\n",
+//                log_place_holder.c_str());
+//  switch_user(session);
+//  // init db
+//  cmd.com_init_db.db_name = "mysql";
+//  cmd.com_init_db.length = strlen("mysql");
+//  run_cmd(session, COM_INIT_DB, &cmd, nullptr, p);
+//
+//  char stmt_buffer[512] = {'\0'};
+//
+//  while (1) {
+//    if (timesup()) {
+//      // flush logs
+//      sprintf(stmt_buffer, "FLUSH LOGS");
+//      set_query_in_com_data(&cmd, stmt_buffer);
+//      run_cmd(session, COM_QUERY, &cmd, nullptr, p);
+//      memset(stmt_buffer, 0, sizeof(stmt_buffer));
+//    }
+//    sleep(3);
+//  }
+//  pthread_cleanup_pop(0);
+//  return 0;
+//}
 
 static bool is_mgr_primary(struct mysql_binlog_backup_context *con) {
-
+  return true;
   char buffer[RUNTIME_STRING_BUFFER];
   MYSQL_SESSION session = nullptr;
   COM_DATA cmd;
@@ -471,9 +482,10 @@ static bool is_mgr_primary(struct mysql_binlog_backup_context *con) {
 
   bool value_got = protocal_cb_result.elements >= 2 ? true : false;
   /* assign the result to the var*/
-  if(!value_got){
+  if (!value_got) {
     InfoPluginLog(con->plugin_log_file,
-                  "[ROLE STATE] Get nothing from the systable about the mgr role info%s\n",
+                  "[ROLE STATE] Get nothing from the systable about the mgr "
+                  "role info%s\n",
                   log_place_holder.c_str());
     srv_session_close(session);
     srv_session_deinit_thread();
@@ -487,7 +499,8 @@ static bool is_mgr_primary(struct mysql_binlog_backup_context *con) {
     InfoPluginLog(con->plugin_log_file,
                   "[ROLE STATE] Current node role: %s,state :%s, which is not "
                   "the primary node,skip and continue check\n",
-                  member_role, member_state);
+                  std::string(member_role).c_str(),
+                  std::string(member_state).c_str());
     free(member_role);
     free(member_state);
     srv_session_close(session);
@@ -508,7 +521,6 @@ static bool is_mgr_primary(struct mysql_binlog_backup_context *con) {
 }
 
 static bool get_cluster_shard_name(struct mysql_binlog_backup_context *con) {
-
   char buffer[RUNTIME_STRING_BUFFER];
   MYSQL_SESSION session = nullptr;
   COM_DATA cmd;
@@ -536,17 +548,19 @@ static bool get_cluster_shard_name(struct mysql_binlog_backup_context *con) {
 
   char stmt_buffer[4096] = {'\0'};
   memset(stmt_buffer, 0, sizeof(stmt_buffer));
-  sprintf(stmt_buffer, "select `cluster_name`,`shard_name` from "
-                       "`kunlun_sysdb`.`cluster_info` limit 1");
+  sprintf(stmt_buffer,
+          "select `cluster_name`,`shard_name` from "
+          "`kunlun_sysdb`.`cluster_info` limit 1");
   // sprintf(stmt_buffer, "select 1");
   set_query_in_com_data(&cmd, stmt_buffer);
   run_cmd(session, COM_QUERY, &cmd, nullptr, con);
 
   bool value_got = protocal_cb_result.elements >= 2 ? true : false;
-  if(!value_got){
-    InfoPluginLog(con->plugin_log_file,
-                  "Get nothing from the systable about the cluster shard id info%s\n",
-                  log_place_holder.c_str());
+  if (!value_got) {
+    InfoPluginLog(
+        con->plugin_log_file,
+        "Get nothing from the systable about the cluster shard id info%s\n",
+        log_place_holder.c_str());
     return false;
   }
   /* assign the result to the var*/
@@ -578,14 +592,27 @@ static void *mysql_binlog_backup(void *p) {
   RemoteFileBase *rfbpt = get_backup_instance(con->storage_type);
   con->rfbpt = rfbpt;
 
-  uchar raw_buffer[64 * 1024]; // 64K
+  uchar raw_buffer[64 * 1024];  // 64K
   bool binlog_rotated = true;
   File fd;
 
   for (;;) {
-    if (!is_mgr_primary(con)) {
+    if (!binlog_backup_open_mode) {
+      InfoPluginLog(con->plugin_log_file,
+                    "binlog_backup_open_mode is %s, wait and continue.\n",
+                    binlog_backup_open_mode ? "true" : "false");
       WAIT_CONTINUE(3);
     }
+
+    bool is_primary = false;
+    if (!(is_primary = is_mgr_primary(con))) {
+      InfoPluginLog(con->plugin_log_file,
+                    "binlog_backup is enable, but current mysqld instance "
+                    "is not PRIMARY%s.\n",
+                    log_place_holder.c_str());
+      WAIT_CONTINUE(3);
+    }
+
     /* get binlog file name */
     if (binlog_rotated) {
       std::string binlog_fn_next = get_next_binlog_to_backup();
@@ -599,6 +626,8 @@ static void *mysql_binlog_backup(void *p) {
       binlog_rotated = false;
     }
 
+    InfoPluginLog(con->plugin_log_file, "binlog_backup start backing up %s \n",
+                  binlog_fn.c_str());
     if ((fd = my_open(binlog_fn.c_str(), O_RDONLY, MYF(0))) < 0) {
       ErrorPluginLog(con->plugin_log_file, "%s", strerror(errno));
       WAIT_CONTINUE(1);
@@ -617,25 +646,28 @@ static void *mysql_binlog_backup(void *p) {
     for (;;) {
       r_count = my_read(fd, raw_buffer, sizeof(raw_buffer), MYF(0));
       switch (r_count) {
-      case 0:
-        /*
-         * There are two scene may happen:
-         * 1. binlog rotate.
-         * 2. no binlog event write.
-         **/
-        binlog_rotated = have_new_binlog();
-        if (binlog_rotated == false) {
-          sleep(1);
-        }
-        break;
-      case MY_FILE_ERROR:
-        /* error occours */
-        ErrorPluginLog(con->plugin_log_file, "%s", strerror(errno));
-        break;
-      default:;
-        // ...
+        case 0:
+          /*
+           * There are two scene may happen:
+           * 1. binlog rotate.
+           * 2. no binlog event write.
+           **/
+          binlog_rotated = have_new_binlog();
+          if (binlog_rotated == false) {
+            sleep(1);
+          }
+          break;
+        case MY_FILE_ERROR:
+          /* error occours */
+          ErrorPluginLog(con->plugin_log_file, "%s", strerror(errno));
+          break;
+        default:;
+          // ...
       }
 
+      if (!binlog_backup_open_mode) {
+        break;
+      }
       if (binlog_rotated) {
         break;
       }
@@ -662,6 +694,10 @@ static void *mysql_binlog_backup(void *p) {
   return 0;
 }
 
+static SERVICE_TYPE(registry) *reg_srv = nullptr;
+SERVICE_TYPE(log_builtins) *log_bi = nullptr;
+SERVICE_TYPE(log_builtins_string) *log_bs = nullptr;
+
 /*
   Initialize the Binlog-backup at server start or plugin installation.
 
@@ -682,13 +718,14 @@ static int binlog_backup_plugin_init(void *p) {
 #ifdef HAVE_PSI_INTERFACE
   init_binlog_backup_psi_keys();
 #endif
+  if (init_logging_service_for_plugin(&reg_srv, &log_bi, &log_bs)) return true;
 
   // memset(&protocol_callbacks, 0, sizeof(protocol_callbacks));
   struct mysql_binlog_backup_context *con;
   my_thread_attr_t attr; /* Thread attributes */
-  char buffer[RUNTIME_STRING_BUFFER];
-  time_t result = time(NULL);
-  struct tm tm_tmp;
+  // char buffer[RUNTIME_STRING_BUFFER];
+  // time_t result = time(NULL);
+  // struct tm tm_tmp;
 
   struct st_plugin_int *plugin = (struct st_plugin_int *)p;
 
@@ -699,11 +736,13 @@ static int binlog_backup_plugin_init(void *p) {
   // for srv_session_init_thd
   con->p = p;
 
-  /* init log file */
-  fn_format(plugin_log_filename, "mysql-binlog_backup_plugin", "", ".log",
-            MY_REPLACE_EXT | MY_UNPACK_FILENAME);
-  unlink(plugin_log_filename);
-  con->plugin_log_file = my_open(plugin_log_filename, O_CREAT | O_RDWR, MYF(0));
+  ///* init log file */
+  // fn_format(plugin_log_filename, "mysql-binlog_backup_plugin", "", ".log",
+  //          MY_REPLACE_EXT | MY_UNPACK_FILENAME);
+  // unlink(plugin_log_filename);
+  // con->plugin_log_file = my_open(plugin_log_filename, O_CREAT | O_RDWR,
+  // MYF(0));
+  con->plugin_log_file = -1;
 
   /* init backup state file */
   /*
@@ -749,12 +788,12 @@ static int binlog_backup_plugin_init(void *p) {
   /*
     No threads exist at this point in time, so this is thread safe.
   */
-  localtime_r(&result, &tm_tmp);
-  snprintf(buffer, sizeof(buffer),
-           "Starting up at %02d%02d%02d %2d:%02d:%02d\n", tm_tmp.tm_year % 100,
-           tm_tmp.tm_mon + 1, tm_tmp.tm_mday, tm_tmp.tm_hour, tm_tmp.tm_min,
-           tm_tmp.tm_sec);
-  my_write(con->plugin_log_file, (uchar *)buffer, strlen(buffer), MYF(0));
+  // localtime_r(&result, &tm_tmp);
+  // snprintf(buffer, sizeof(buffer),
+  //         "Starting up at %02d%02d%02d %2d:%02d:%02d\n", tm_tmp.tm_year %
+  //         100, tm_tmp.tm_mon + 1, tm_tmp.tm_mday, tm_tmp.tm_hour,
+  //         tm_tmp.tm_min, tm_tmp.tm_sec);
+  // my_write(con->plugin_log_file, (uchar *)buffer, strlen(buffer), MYF(0));
 
   my_thread_attr_init(&attr);
   my_thread_attr_setdetachstate(&attr, MY_THREAD_CREATE_JOINABLE);
@@ -766,12 +805,12 @@ static int binlog_backup_plugin_init(void *p) {
     return 1;
   }
 
-  /* now create the `flush logs` interval thread */
-  if (my_thread_create(&con->binlog_flush_interval_thread, &attr,
-                       mysql_binlog_flush_interval, (void *)con) != 0) {
-    fprintf(stderr, "Could not create binlog_flush_interval thread!\n");
-    return 1;
-  }
+  ///* now create the `flush logs` interval thread */
+  // if (my_thread_create(&con->binlog_flush_interval_thread, &attr,
+  //                     mysql_binlog_flush_interval, (void *)con) != 0) {
+  //  fprintf(stderr, "Could not create binlog_flush_interval thread!\n");
+  //  return 1;
+  //}
   plugin->data = (void *)con;
 
   return 0;
@@ -806,29 +845,40 @@ static int binlog_backup_plugin_deinit(void *p) {
            tm_tmp.tm_year % 100, tm_tmp.tm_mon + 1, tm_tmp.tm_mday,
            tm_tmp.tm_hour, tm_tmp.tm_min, tm_tmp.tm_sec);
   if (!con) {
+    delete_dynamic(&protocal_cb_result);
+    deinit_logging_service_for_plugin(&reg_srv, &log_bi, &log_bs);
     return 0;
   }
-  my_write(con->plugin_log_file, (uchar *)buffer, strlen(buffer), MYF(0));
+  // my_write(con->plugin_log_file, (uchar *)buffer, strlen(buffer), MYF(0));
 
   if ((con->binlog_backup_thread).thread != 0) {
     my_thread_cancel(&(con->binlog_backup_thread));
     my_thread_join(&(con->binlog_backup_thread), &dummy_retval);
   }
-  if ((con->binlog_flush_interval_thread).thread != 0) {
-    my_thread_cancel(&(con->binlog_flush_interval_thread));
-    my_thread_join(&(con->binlog_flush_interval_thread), &dummy_retval);
-  }
+  // if ((con->binlog_flush_interval_thread).thread != 0) {
+  //  my_thread_cancel(&(con->binlog_flush_interval_thread));
+  //  my_thread_join(&(con->binlog_flush_interval_thread), &dummy_retval);
+  //}
 
-  my_close(con->plugin_log_file, MYF(0));
+  // my_close(con->plugin_log_file, MYF(0));
   my_close(con->backup_state_file, MYF(0));
 
   delete_dynamic(&protocal_cb_result);
   delete con->rfbpt;
 
   my_free(con);
+  deinit_logging_service_for_plugin(&reg_srv, &log_bi, &log_bs);
 
   return 0;
 }
+
+static MYSQL_SYSVAR_BOOL(
+    open_mode, binlog_backup_open_mode, PLUGIN_VAR_RQCMDARG,
+    "Mode in which binlog_backup streaming should be opend", nullptr, nullptr,
+    false);
+
+static SYS_VAR *binlog_backup_system_variables[] = {MYSQL_SYSVAR(open_mode),
+                                                    nullptr};
 
 struct st_mysql_daemon binlog_backup_plugin = {MYSQL_DAEMON_INTERFACE_VERSION};
 /*
@@ -846,8 +896,8 @@ mysql_declare_plugin(binlog_backup){
     NULL,                        /* Plugin Check uninstall */
     binlog_backup_plugin_deinit, /* Plugin Deinit */
     0x0100 /* 1.0 */,
-    NULL, /* status variables                */
-    NULL, /* system variables                */
-    NULL, /* config options                  */
-    0,    /* flags                           */
+    NULL,                           /* status variables                */
+    binlog_backup_system_variables, /* system variables                */
+    NULL,                           /* config options                  */
+    0,                              /* flags                           */
 } mysql_declare_plugin_end;
