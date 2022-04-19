@@ -253,8 +253,8 @@ log_error_verbosity=3
 disconnect_on_net_write_timeout = true
 ################################################### Group Replication related settings ##############################
 ddc_mode=1
-slow_logging_start_point=2
-innodb_sleep_wait_for_free_block_ms=30
+#slow_logging_start_point=2
+#innodb_sleep_wait_for_free_block_ms=30
 
 #group_replication_group_name="place_holder_mgr_group_name" # "uuid"
 #group_replication_start_on_boot=off # set this to on at the end of a db instance installation.
