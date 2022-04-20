@@ -256,7 +256,7 @@ bool BiodirectPopen::popenImpl() {
   argvs[3] = nullptr;
 
   /*execv*/
-  execv("/bin/sh", (char *const *)(argvs));
+  execv("/bin/sh", const_cast<char *const *>(argvs));
 
   setErr("Can not reach here after execv()");
   /* can not reach here */
