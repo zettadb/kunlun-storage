@@ -1,3 +1,5 @@
+set session sql_log_bin=0;
+
 delimiter ;;
 -- errcode: >0: success, the NO. of seq values fetched; -1: sequence not found; -2: sequence value consumed; -3: argument error
 CREATE PROCEDURE kunlun_sysdb.seq_reserve_vals(dbname varchar(64), seqname varchar(64), nvals int , OUT newstart bigint, OUT newval bigint, OUT errcode int)
@@ -59,19 +61,10 @@ cur_proc: BEGIN
 			set newstart = newval + @step;
 			SET @ngot = 0;
 		END IF;
-		set @i=0;
 
-		loop1: WHILE @i < @nvals do
-			-- fetch one by one in case it overflows
-			if @max_value - @step >= newval then
-				set newval = newval + @step;
-			else
-				-- no more values for this round, return all we have here and
-				-- update row.currval
-				leave loop1;
-			end if;
-			set @i=@i+1;
-		END WHILE;
+		set @i = floor((@max_value - newval) / @step);
+		set @i = if(@i>@nvals, @nvals, @i);
+		set newval = newval + @i*@step;
 		set errcode = @i + @ngot;
 	ELSE
 		-- @step < 0
@@ -95,19 +88,9 @@ cur_proc: BEGIN
 			SET @ngot = 0;
 		END IF;
 
-		set @i=0;
-
-		loop2: WHILE @i < @nvals do
-			-- fetch one by one in case it overflows
-			if @min_value - @step <= newval then
-				set newval = newval + @step;
-			else
-				-- no more values for this round, return all we have here and
-				-- update row.currval
-				leave loop2;
-			end if;
-			set @i=@i+1;
-		END WHILE;
+		set @i = floor((@min_value - newval) / @step);
+		set @i = if(@i>@nvals, @nvals, @i);
+		set newval = newval + @i*@step;
 		set errcode = @i+@ngot;
 	END IF;
 
@@ -132,6 +115,7 @@ BEGIN
     DECLARE i INT DEFAULT 0;
     DECLARE cur JSON;
     DECLARE seqrelid BIGINT;
+    DECLARE dbid BIGINT;
     DECLARE dbname VARCHAR(64);
     DECLARE seqname VARCHAR(64);
     DECLARE nvals INT;
@@ -143,13 +127,15 @@ BEGIN
     SET result = JSON_ARRAY();
     WHILE i<len DO
         SET cur = JSON_EXTRACT(param, concat('$[',i,']'));
+        SET dbid = JSON_EXTRACT(cur, "$.dbid");
         SET seqrelid = JSON_EXTRACT(cur, "$.seqrelid");
         SET dbname = JSON_UNQUOTE(JSON_EXTRACT(cur, "$.dbname"));
         SET seqname = JSON_UNQUOTE(JSON_EXTRACT(cur, "$.seqname"));
         SET nvals = JSON_UNQUOTE(JSON_EXTRACT(cur, "$.nvals"));
         SET newstart = 0, newval=0, retcode=0;
         CALL kunlun_sysdb.seq_reserve_vals(dbname, seqname, nvals, newstart, newval, retcode);
-        SET result = JSON_ARRAY_APPEND(result, '$', JSON_OBJECT("seqrelid", seqrelid,
+        SET result = JSON_ARRAY_APPEND(result, '$', JSON_OBJECT("dbid", dbid,
+          			"seqrelid", seqrelid,
                 "newstart", newstart,
                 "newval", newval,
                 "retcode", retcode)
