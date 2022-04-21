@@ -205,6 +205,13 @@ class MysqlConfig:
 	else:
             os.system(" ".join(["su", user, "-c", "\"", cmd0, "./bootmysql.sh", install_path, cnf_file_path, user+"\""]))
 
+        # append the new instance's port to datadir mapping into instance_list.txt
+        if not os.path.exists(etc_path):
+            os.mkdir(etc_path)
+            if euser == 'root':
+                subprocess.call(["chown", "-R", user+":"+group, etc_path])
+        os.system("echo \"" + str(server_port) + "==>" + cnf_file_path + "\" >> " + conf_list_file)
+
         os.system("sed -e 's/#skip_name_resolve=on/skip_name_resolve=on/' -i " + cnf_file_path)
 
         change_pwd_sql = "set sql_log_bin=0;ALTER USER 'root'@'localhost' IDENTIFIED BY 'root';"
@@ -217,7 +224,7 @@ class MysqlConfig:
                 + "set sql_log_bin=0;delete from mysql.db where Db='test\_%' and Host='%' ;delete from mysql.db where Db='test' and Host='%';flush privileges;"  \
                 + '''CHANGE MASTER TO MASTER_USER='repl', MASTER_PASSWORD='repl_pwd' FOR CHANNEL 'group_replication_recovery';'''   \
                 + start_mgr_sql
-        init_sql3 = "".join(["insert into kunlun_sysdb.cluster_info (cluster_name,shard_name) values ('",cluster_id,"','",shard_id,"')"])
+        init_sql3 = "".join(["set sql_log_bin=0; insert into kunlun_sysdb.cluster_info (cluster_name,shard_name) values ('",cluster_id,"','",shard_id,"')"])
         sys_cmd = " ".join([cmd0, install_path + '/bin/mysql', '--connect-expired-password', '-S' + data_path + '/prod/mysql.sock', '-uroot', '-p'+"'"+root_init_password+"'", '-e', '"' + change_pwd_sql + init_sql + '"', '; exit 0'])
 
         add_proc_cmd = " ".join([cmd0, install_path + '/bin/mysql', '--connect-expired-password', '-S' + data_path + '/prod/mysql.sock', '-uroot', '-proot <' , install_path+'/dba_tools/seq_reserve_vals.sql' ])
@@ -229,19 +236,20 @@ class MysqlConfig:
             if result.find('version') >= 0:
                 break
             os.system('sleep 5\n')
-        if ha_mode == 'no_rep' or is_master:
-            ret = os.system(add_proc_sysdb)
-            if ret != 0:
-                raise Exception("Fail to execute command:" + add_proc_sysdb)
-            ret = os.system(initcmd3)
-            if ret != 0:
-                raise Exception("Fail to execute command:" + initcmd3)
-            ret = os.system(add_proc_cmd)
-            if ret != 0:
-                raise Exception("Fail to execute command:" + add_proc_cmd)
+        # we have disabled sql_log_bin in the script so that replicas can execute it too.
+        ret = os.system(add_proc_sysdb)
+        if ret != 0:
+            raise Exception("Fail to execute command:" + add_proc_sysdb)
+        ret = os.system(initcmd3)
+        if ret != 0:
+            raise Exception("Fail to execute command:" + initcmd3)
+        ret = os.system(add_proc_cmd)
+        if ret != 0:
+            raise Exception("Fail to execute command:" + add_proc_cmd)
         ret = os.system(initcmd2)
         if ret != 0:
             raise Exception("Fail to execute command:" + initcmd2)
+
         if ha_mode == 'mgr':
             os.system("sed -e 's/#super_read_only=OFF/super_read_only=ON/' -i " + cnf_file_path)
 #        uuid_cmd_str = install_path + "/bin/mysql  --silent --skip-column-names --connect-expired-password -S" + data_path + '/prod/mysql.sock -uroot -proot -e "set @uuid_str=uuid(); set global group_replication_group_name=@uuid_str; ' + start_mgr_sql+ ' select @uuid_str;"\n'
@@ -250,12 +258,6 @@ class MysqlConfig:
 #        uuid_str, errmsg = popen_ret.communicate()
 #        uuid_str = uuid_str[:-1] # chop off the trailing \n
 #        subprocess.call(shlex.split("sed -e 's/place_holder_mgr_group_name/" + uuid_str + "/' -i " + cnf_file_path))
-        # append the new instance's port to datadir mapping into instance_list.txt
-        if not os.path.exists(etc_path):
-            os.mkdir(etc_path)
-            if euser == 'root':
-                subprocess.call(["chown", "-R", user+":"+group, etc_path])
-        os.system("echo \"" + str(server_port) + "==>" + cnf_file_path + "\" >> " + conf_list_file)
 
 def print_usage():
     print 'Usage: install-mysql.py --config /path/of/mgr/config/file --target_node_index idx --cluster_id ID --shard_id N [--dbcfg /db/config/template/path/template.cnf] [--user db_init_user] [--server_id N] [--ha_mode mgr|no_rep]'

@@ -527,6 +527,8 @@ static bool get_cluster_shard_name(struct mysql_binlog_backup_context *con) {
   if (srv_session_init_thread(con->p)) {
     ErrorPluginLog(con->plugin_log_file, "init srv session faildi%s\n",
                    log_place_holder.c_str());
+    srv_session_close(session);
+    srv_session_deinit_thread();
     return false;
   }
   /* Open session: Must pass */
@@ -536,6 +538,8 @@ static bool get_cluster_shard_name(struct mysql_binlog_backup_context *con) {
   if (!session) {
     ErrorPluginLog(con->plugin_log_file, "srv_session_open failed%s\n",
                    log_place_holder.c_str());
+    srv_session_close(session);
+    srv_session_deinit_thread();
     return false;
   }
   InfoPluginLog(con->plugin_log_file, "srv_session_open successfully%s\n",
@@ -561,6 +565,8 @@ static bool get_cluster_shard_name(struct mysql_binlog_backup_context *con) {
         con->plugin_log_file,
         "Get nothing from the systable about the cluster shard id info%s\n",
         log_place_holder.c_str());
+    srv_session_close(session);
+    srv_session_deinit_thread();
     return false;
   }
   /* assign the result to the var*/
@@ -578,6 +584,25 @@ static void *mysql_binlog_backup(void *p) {
   struct mysql_binlog_backup_context *con =
       (struct mysql_binlog_backup_context *)p;
   char buffer[RUNTIME_STRING_BUFFER];
+
+  for (;;) {
+    if (!binlog_backup_open_mode) {
+      InfoPluginLog(con->plugin_log_file,
+                    "binlog_backup_open_mode is %s, wait and continue.\n",
+                    binlog_backup_open_mode ? "true" : "false");
+      WAIT_CONTINUE(3);
+    }
+
+    bool is_primary = false;
+    if (!(is_primary = is_mgr_primary(con))) {
+      InfoPluginLog(con->plugin_log_file,
+                    "binlog_backup is enable, but current mysqld instance "
+                    "is not PRIMARY%s.\n",
+                    log_place_holder.c_str());
+      WAIT_CONTINUE(3);
+    }
+    break;
+  }
 
   /* init the cluster shard id info */
   while (!get_cluster_shard_name(con)) {
