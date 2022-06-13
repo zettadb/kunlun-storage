@@ -1799,6 +1799,7 @@ ADD_SUBDIRECTORY(libservices)
 
 IF(NOT WITHOUT_SERVER)
   ADD_SUBDIRECTORY(testclients)
+  ADD_SUBDIRECTORY(kunlun_mysql_protocol)
   ADD_SUBDIRECTORY(sql)
 ENDIF()
 
