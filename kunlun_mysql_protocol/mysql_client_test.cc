@@ -1584,7 +1584,7 @@ static void test_double_compare() {
   rc = mysql_stmt_execute(stmt);
   check_execute(stmt, rc);
 
-  verify_affected_rows(0);// float precision issues, originally it was 0 too.
+  verify_affected_rows(1);// kunlun-server doesn't have the float precision issues, originally it was 0.
 
   mysql_stmt_close(stmt);
 
@@ -11592,6 +11592,189 @@ static void test_bug6081() {
 
 #endif // TEST_MYSQL_PRIVATE_UNSUPPORTED
 
+static void test_select_db() {
+  int rc;
+  myheader("test_select_db");
+  rc = mysql_query(mysql, "drop schema if exists schm1 cascade;");
+  myquery(rc);
+  rc = mysql_query(mysql, "drop schema if exists schm2 cascade");
+  myquery(rc);
+
+  rc = mysql_query(mysql, "create schema schm1;");
+  myquery(rc);
+  rc = mysql_query(mysql, "create schema schm2;");
+  myquery(rc);
+
+  rc = mysql_select_db(mysql, "schm1");
+  myquery(rc);
+  rc = mysql_query(mysql, "select current_schema");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 1);
+  rc = mysql_query(mysql, "show search_path");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 1);
+  rc = mysql_query(mysql, "create table t1(a serial primary key, b int)");
+  myquery(rc);
+  rc = mysql_query(mysql, "insert into t1(b) values(1),(3),(5)");
+  myquery(rc);
+  rc = mysql_query(mysql, "select*from t1;");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 3);
+
+
+  rc = mysql_select_db(mysql, "schm2");
+  myquery(rc);
+  rc = mysql_query(mysql, "select current_schema");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 1);
+  rc = mysql_query(mysql, "show search_path");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 1);
+
+  rc = mysql_query(mysql, "select*from t1;");
+  myquery_r(rc);
+
+  rc = mysql_query(mysql, "create table t1(a serial primary key, b int)");
+  myquery(rc);
+  rc = mysql_query(mysql, "insert into t1(b) values(2),(4),(6), (8)");
+  myquery(rc);
+  rc = mysql_query(mysql, "select*from t1;");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 4);
+
+  rc = mysql_query(mysql, "use schm1");
+  myquery(rc);
+  rc = mysql_query(mysql, "select current_schema");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 1);
+  rc = mysql_query(mysql, "select*from t1");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 3);
+
+  rc = mysql_query(mysql, "use schm2");
+  myquery(rc);
+  rc = mysql_query(mysql, "select current_schema");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 1);
+  rc = mysql_query(mysql, "select*from t1");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 4);
+
+  rc = mysql_select_db(mysql, "");
+  myquery(rc);
+  rc = mysql_query(mysql, "select current_schema");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 1);
+  rc = mysql_query(mysql, "select*from schm1.t1");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 3);
+
+  rc = mysql_query(mysql, "select*from schm2.t1");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 4);
+  
+  rc = mysql_select_db(mysql, "schema_noexist");
+  myquery_r(rc);
+
+  rc = mysql_query(mysql, "drop schema if exists schm1 cascade;");
+  myquery(rc);
+  rc = mysql_query(mysql, "drop schema if exists schm2 cascade");
+  myquery(rc);
+}
+
+
+static void test_unknown_coltypes()
+{
+  MYSQL_RES *result;
+  MYSQL_STMT *stmt;
+  MYSQL_BIND my_bind[3];
+  int rc;
+  char f[256], d[256], e[256];
+  ulong f_len, d_len, e_len;
+  bool is_null[3];
+  /*
+    Fields of unknown types should be returned as strings.
+  */
+  myheader("test_unknown_coltypes");
+  rc = mysql_query(mysql, "drop table if exists test_unknown_coltypes");
+  myquery(rc);
+  rc = mysql_query(mysql, "create table test_unknown_coltypes( a int)");
+  myquery(rc);
+  rc = mysql_query(mysql, "SELECT relacl , reloptions , relpartbound FROM pg_class where relname = 'test_unknown_coltypes'");
+  myquery(rc);
+  rc = my_process_result(mysql);
+  DIE_UNLESS(rc == 1);
+
+  stmt = mysql_simple_prepare(mysql, "SELECT relacl , reloptions , relpartbound FROM pg_class where relname = 'test_unknown_coltypes'");
+  check_stmt(stmt);
+
+  memset(my_bind, 0, sizeof(my_bind));
+  my_bind[0].buffer_type = MYSQL_TYPE_STRING;
+  my_bind[0].buffer = f;
+  my_bind[0].buffer_length = (ulong)sizeof(f);
+  my_bind[0].length = &f_len;
+  my_bind[0].is_null = &is_null[0];
+  my_bind[1].buffer_type = MYSQL_TYPE_STRING;
+  my_bind[1].buffer = d;
+  my_bind[1].buffer_length = (ulong)sizeof(d);
+  my_bind[1].length = &d_len;
+  my_bind[1].is_null = &is_null[1];
+  my_bind[2].buffer_type = MYSQL_TYPE_STRING;
+  my_bind[2].buffer = e;
+  my_bind[2].buffer_length = (ulong)sizeof(e);
+  my_bind[2].length = &e_len;
+  my_bind[2].is_null = &is_null[2];
+
+  rc = mysql_stmt_bind_result(stmt, my_bind);
+  check_execute(stmt, rc);
+
+  /* get the result */
+  rc = mysql_stmt_execute(stmt);
+  check_execute(stmt, rc);
+
+  rc = mysql_stmt_store_result(stmt);
+  check_execute(stmt, rc);
+
+  result = mysql_stmt_result_metadata(stmt);
+  mytest(result);
+  my_print_result_metadata(result);
+
+  mysql_field_seek(result, 0);
+
+  while ((rc = mysql_stmt_fetch(stmt)) == 0) {
+    if (!opt_silent) {
+      fputc('\t', stdout);
+      fputc('|', stdout);
+    }
+    mysql_field_seek(result, 0);
+    for (int i = 0; i < 3; i++) {
+      if (!opt_silent) {
+        if (is_null[i])
+          fprintf(stdout, " NULL |");
+        else {
+		  char *p = (char*)my_bind[i].buffer;
+		  p[*my_bind[i].length] = '\0';
+          fprintf(stdout, " %*s |", (int)(*my_bind[i].length), (char*)my_bind[i].buffer);
+        }
+	  }
+	}
+  }
+  mysql_stmt_close(stmt);
+}
+
 static void test_bug6096() {
   MYSQL_STMT *stmt;
   MYSQL_RES *query_result, *stmt_metadata;
@@ -15707,7 +15890,6 @@ static void test_bug28934() {
   myquery(mysql_query(mysql, "drop table t1"));
 }
 
-#ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
 /*
   Test mysql_change_user() C API and COM_CHANGE_USER
 */
@@ -15741,43 +15923,41 @@ static void test_change_user() {
   DIE_UNLESS(l_mysql != nullptr);
 
   /* Prepare environment */
-  sprintf(buff, "drop database if exists %s", db);
+  sprintf(buff, "drop schema if exists %s", db);
   rc = mysql_query(l_mysql, buff);
   myquery2(l_mysql, rc);
 
-  sprintf(buff, "create database %s", db);
+  sprintf(buff, "create schema %s", db);
+  rc = mysql_query(l_mysql, buff);
+  myquery2(l_mysql, rc);
+  
+  sprintf(buff, "drop user if exists %s", user_pw);
+  rc = mysql_query(l_mysql, buff);
+  myquery2(l_mysql, rc);
+  sprintf(buff, "create user %s password '%s'", user_pw, pw);
   rc = mysql_query(l_mysql, buff);
   myquery2(l_mysql, rc);
 
-  sprintf(buff, "create user %s@'%%' identified by '%s'", user_pw, pw);
+  sprintf(buff, "grant select on all tables in schema %s to %s", db, user_pw);
   rc = mysql_query(l_mysql, buff);
   myquery2(l_mysql, rc);
 
-  sprintf(buff, "grant select on %s.* to %s@'%%'", db, user_pw);
+  sprintf(buff, "grant select on all tables in schema %s to %s", db, user_pw);
   rc = mysql_query(l_mysql, buff);
   myquery2(l_mysql, rc);
 
-  sprintf(buff, "create user %s@'localhost' identified by '%s'", user_pw, pw);
+  sprintf(buff, "drop user if exists %s", user_no_pw);
+  rc = mysql_query(l_mysql, buff);
+  myquery2(l_mysql, rc);
+  sprintf(buff, "create user %s", user_no_pw);
   rc = mysql_query(l_mysql, buff);
   myquery2(l_mysql, rc);
 
-  sprintf(buff, "grant select on %s.* to %s@'localhost'", db, user_pw);
+  sprintf(buff, "grant select on all tables in schema %s to %s", db, user_no_pw);
   rc = mysql_query(l_mysql, buff);
   myquery2(l_mysql, rc);
 
-  sprintf(buff, "create user %s@'%%'", user_no_pw);
-  rc = mysql_query(l_mysql, buff);
-  myquery2(l_mysql, rc);
-
-  sprintf(buff, "grant select on %s.* to %s@'%%'", db, user_no_pw);
-  rc = mysql_query(l_mysql, buff);
-  myquery2(l_mysql, rc);
-
-  sprintf(buff, "create user %s@'localhost'", user_no_pw);
-  rc = mysql_query(l_mysql, buff);
-  myquery2(l_mysql, rc);
-
-  sprintf(buff, "grant select on %s.* to %s@'localhost'", db, user_no_pw);
+  sprintf(buff, "grant select on all tables in schema %s to %s", db, user_no_pw);
   rc = mysql_query(l_mysql, buff);
   myquery2(l_mysql, rc);
 
@@ -15945,27 +16125,18 @@ static void test_change_user() {
 
   mysql_close(l_mysql);
 
-  sprintf(buff, "drop database %s", db);
+  sprintf(buff, "drop schema %s", db);
   rc = mysql_query(mysql, buff);
   myquery(rc);
 
-  sprintf(buff, "drop user %s@'%%'", user_pw);
+  sprintf(buff, "drop user %s", user_pw);
   rc = mysql_query(mysql, buff);
   myquery(rc);
 
-  sprintf(buff, "drop user %s@'%%'", user_no_pw);
-  rc = mysql_query(mysql, buff);
-  myquery(rc);
-
-  sprintf(buff, "drop user %s@'localhost'", user_pw);
-  rc = mysql_query(mysql, buff);
-  myquery(rc);
-
-  sprintf(buff, "drop user %s@'localhost'", user_no_pw);
+  sprintf(buff, "drop user %s", user_no_pw);
   rc = mysql_query(mysql, buff);
   myquery(rc);
 }
-#endif
 
 
 /*
@@ -22684,6 +22855,7 @@ static struct my_tests_st my_tests[] = {
     //{"test_bug15752", test_bug15752},
 #endif
     //{"test_mysql_insert_id", test_mysql_insert_id},
+    {"test_change_user", test_change_user},
 #ifdef ENABLE_BUG_TESTS
     {"test_bug19671", test_bug19671},
     {"test_bug21206", test_bug21206},
@@ -22702,7 +22874,6 @@ static struct my_tests_st my_tests[] = {
     {"test_bug29687", test_bug29687},
     {"test_bug29692", test_bug29692},
     {"test_bug29306", test_bug29306},
-    //{"test_change_user", test_change_user},
     //{"test_bug30472", test_bug30472},
     //{"test_bug20023", test_bug20023},
     {"test_bug45010", test_bug45010},
@@ -22789,6 +22960,8 @@ static struct my_tests_st my_tests[] = {
     {"test_bug32558782", test_bug32558782},
     //{"test_bug32847269", test_bug32847269},
 #endif
+	{"test_select_db", test_select_db},
+	{"test_unknown_coltypes", test_unknown_coltypes},
     {nullptr, nullptr}};
 
 // all test cases for bugs and wls which are disabled above by
