@@ -1,14 +1,18 @@
-Kunlun-storage originated from percona-mysql-8.0.18-9, and it contains fixes to all known XA bugs in mysql-8.0.18-9. Without such fixes, Kunlun DDC will not be crash safe and may lose committed transactions or be harmed by other serious data consistency errors, in the event of various hardware/software/network failures.
+Kunlun-storage originated from percona-mysql-8.0.26, and it contains fixes to all known XA bugs in mysql-8.0.26 and previous versions of MySQL 8.0. Without such fixes, KunlunBase will not be crash safe and may lose committed XA transactions or be harmed by other serious data consistency errors, in the event of various hardware/software/network failures and power outages.
 
-Kunlun-storage also contains features required by the computing node program of Kunlun distributed DBMS, and thus Kunlun Distributed Database Cluster(DDC) requires the use of Kunlun-storage as meta data cluster and storage shards. Finally, we enhanced performance of XA transaction processing, and part of such enhancements are also in this open source edition.
+For more information, documentation, resources, downloadables, etc about KunlunBase, please visit www.kunlunbase.com
 
-To achieve all above, we modified percona-mysql extensively --- including innodb, binlog recovery, binlog format, etc. Consequently, kunlun-storage's innodb data file format and some binlog events format are different from community MySQL-8.0.x or percona-server-8.0.x, the data directory of kunlun-storage can not be used by community MySQL-8.0.x or percona-server-8.0.x, and vice versa. But percona xtrabackup can correctly backup a kunlun-storage data directory and restore it.
+Kunlun-storage also contains features required by the kunlun-server --- computing node program of of KunlunBase, and thus KunlunBase requires kunlun-storage instances to form a meta data shard and storage shards. Finally, we enhanced performance of XA transaction processing and serveral other parts of percona-mysql in kunlun-storage.
 
-We also maintain an enterprise edition of Kunlun distributed DBMS, which contains exclusively all performance enhancements in kunlun-storage and kunlun computing node software. Kunlun enterprise edition has identical functionality as this open source version. And they share the same data file format, WAL(redo) log file format, binlog events format, general log format, slow query log format, mysqld log format, and config file content. They also share the same metadata table format in both kunlun-storage and kunlun computing node. Consequently, the data directory of kunlun open source edition and kunlun enterprise edition can be used interchangably.
+To achieve all above, we modified percona-mysql code extensively --- including innodb, binlog recovery, binlog format, etc. Consequently, kunlun-storage's innodb data file format and some binlog events (Previous_gtids_log_event) format are different from community MySQL-8.0.x or percona-server-8.0.x, and the data directory of kunlun-storage can not be used by community MySQL-8.0.x or percona-server-8.0.x, and vice versa. But percona xtrabackup can correctly backup a kunlun-storage instance's data directory and/or restore it.
+
+We also maintain an enterprise edition of kunlun-storage, which contains exclusively all performance enhancements in kunlun-storage and kunlun-server. KunlunBase enterprise edition has identical OLTP functionality as KunlunBase open source edition. And they share the same data file format, WAL(redo) log file format, binlog events format, and all other types of logs(general logs, slow query logs, mysqld error logs), and config file content as well as metadata table format in both kunlun-storage and kunlun-server instances. Consequently, the data directory of KunlunBase open source edition can be used by KunlunBase enterprise edition and vice versa.
+
+For more information, documentation, resources, downloadables, etc about KunlunBase, please visit www.kunlunbase.com
 
 To install Kunlun-storage database instances, see INSTALL.kunlun.md for instructions.
 
-
+========================================================================================================
 Percona Server 8.0
 ------------------
 
