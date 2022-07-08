@@ -1,0 +1,257 @@
+select "ab'cd";
+select 'ab"c';
+
+select "";
+select """;
+select """";
+select """"";
+
+select '';
+select ''';
+select '''';
+select ''''';
+
+select """''";
+select '''""';
+
+select """'''"";
+select """'''\"'";
+select '''"""'';
+select '''"""\'"';
+
+select "''\'\"\%%\__""'";
+
+select '''\"s\"''';
+select '\n','\t','\0','\1','\a','\j';
+
+select "a'b""c\'d\"e''f";
+select 'a"b''c\"d\'e""f';
+select 'ab\tc\x\a\\';
+select 'a\tb\nc';
+select "ab\tc\x\a\\";
+select "a\tb\nc";
+
+select 'ab\tc';
+select 'ab\nc';
+select 'ab\xc';
+select 'ab\rc';
+select 'ab\arc';
+select 'ab\fc';
+select 'ab\cc';
+
+select "ab\xc";
+select "ab\nc";
+select 'ab\\c';
+select 'ab\c';
+select "ab\\c";
+select "ab\c";
+
+
+select "abc';
+select 'abc";
+
+select "abc'";
+select 'abc"';
+
+select "abc''";
+select 'abc""';
+
+select "abc''def";
+select "abc'def";
+select "abc""def";
+select "abc\"def";
+
+select 'abc''def';
+select 'abc\'def';
+select 'abc"def';
+select 'abc""def';
+
+
+select 'abc'  'def';
+select 'abc'  "def";
+select "abc"  "def";
+select "abc"  'def';
+select 'abc'  
+    'def';
+select 'abc'  
+    "def";
+select "abc"  
+    "def";
+select "abc"  
+    'def';
+
+
+select 'abc''def';
+
+select 'abc"def';
+
+select 'abc""def';
+
+select 'ab\tc';
+
+select 'ab\fc';
+select 'ab\cc';
+select 'abc'  'def';
+
+set session sql_mode='ANSI_QUOTES';
+select 'abc'  "def";
+
+select 'abc'  
+         "def";
+
+set session sql_mode='';
+
+select "abc''def";
+
+select "abc'def";
+
+select 'abc''def';
+
+select 'abc"def';
+
+select 'abc""def';
+
+select 'abc'  'def';
+
+select 'abc'  "def";
+
+select 'abc'  
+         "def";
+
+select 'abc'  
+     'def';
+
+
+select "abc"  
+      "def";
+
+select 'abc' 'def';
+
+select 'abc' 
+     "def";
+select 'abc'
+    "def" 
+    'xyz';
+
+select 'abc'  "def" 'xyz';
+select 'abc'  "def" "xyz";
+select 'abc'  'def' 'xyz';
+select 'abc'  'def' "xyz";
+select "abc"  "def" 'xyz';
+select "abc"  "def" "xyz";
+select "abc"  'def' 'xyz';
+select "abc"  'def' "xyz";
+
+select 'abc'"def"'xyz';
+select 'abc'"def""xyz";
+select 'abc''def''xyz';
+select 'abc''def'"xyz";
+select "abc""def"'xyz';
+select "abc""def""xyz";
+select "abc"'def''xyz';
+select "abc"'def'"xyz";
+
+select "abc" 'def';
+
+select "abc" 'def';
+select 'ab\xc';
+
+select 'ab\tc';
+
+
+select 'abc' "def";
+
+select "abc" "def";
+select "abc" ;
+
+select 'abc' ;
+
+select 'ab"c' ;
+
+select 'ab""c' ;
+
+select "ab'c";
+
+select "ab''c";
+
+select "ab''c";
+
+select "abc";
+
+select 'abc' 'def';
+select "abc" "def";
+select "abc" 'def';
+select 'abc' "def";
+
+select 'abc' "'def";
+
+select "abc"
+    "def";
+select "abc"'def';
+select 'abc'"def";
+select "abc""def";
+select 'abc''def';
+
+select 'a\bcd' as f1, 'a\b''cd' as f2, 'a\b''''cd' as f3, 'abcd\\'   as f4, 'ab\'''cd' as f5, '\\' as f6;
+
+# above can only be run in mysql connections
+drop database if exists lexer_quotes;
+create database lexer_quotes;
+use lexer_quotes;
+
+set session sql_mode='ANSI_QUOTES';
+
+create table t1(a int);
+
+create view "t""1" as select*from t1;
+create view `t""1` as select*from t1;
+drop view "t""1";
+drop view `t""1`;
+
+create view "t""1" as select*from t1;
+drop view `t"1`;
+create view "t`1" as select*from t1;
+drop view `t``1`;
+create view `t"2` as select*from t1;
+drop view "t""2";
+create view "t`1" as select*from t1;
+drop view "t`1";
+
+--error ER_PARSE_ERROR
+create view `abc`" as select*from t1;
+--error ER_PARSE_ERROR
+create view "abc"` as select*from t1;
+
+create view `abc"` as select*from t1;
+drop view `abc"`;
+create view "abc`" as select*from t1;
+drop view "abc`";
+create view `abc``` as select*from t1;
+drop view `abc```;
+create view `abc""` as select*from t1;
+drop view `abc""`;
+create view "abc""" as select*from t1;
+drop view "abc""";
+create view "abc``" as select*from t1;
+drop view "abc``";
+
+--error ER_PARSE_ERROR
+create view `abc`d" as select*from t1;
+--error ER_PARSE_ERROR
+create view "abc\"d`" as select*from t1;
+
+create view `abc"d` as select*from t1;
+drop view `abc"d`;
+create view "abc`d" as select*from t1;
+drop view "abc`d";
+create view `abc``d` as select*from t1;
+drop view "abc`d";
+create view `abc""d` as select*from t1;
+drop view "abc""""d";
+
+create view "abc""d" as select*from t1;
+drop view `abc"d`;
+create view "abc``d" as select*from t1;
+drop view `abc````d`;
+
+drop database lexer_quotes;

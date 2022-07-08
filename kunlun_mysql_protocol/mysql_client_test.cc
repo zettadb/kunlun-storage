@@ -185,9 +185,6 @@ static void test_tran_bdb() {
 
   myheader("test_tran_bdb");
 
-  /* set AUTOCOMMIT to OFF */
-  rc = mysql_autocommit(mysql, false);
-  //myquery(rc);
 
   rc = mysql_query(mysql, "DROP TABLE IF EXISTS my_demo_transaction");
   myquery(rc);
@@ -198,7 +195,11 @@ static void test_tran_bdb() {
                    "col1 int , col2 varchar(30)) ");
   myquery(rc);
 
-  rc = mysql_query(mysql, "begin");
+  /* set AUTOCOMMIT to OFF */
+  rc = mysql_autocommit(mysql, false);
+  myquery(rc);
+
+  rc = mysql_query(mysql, "START TRANSACTION");
   myquery(rc);
   /* insert a row and commit the transaction */
   rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
@@ -207,8 +208,14 @@ static void test_tran_bdb() {
   rc = mysql_commit(mysql);
   myquery(rc);
 
-  rc = mysql_query(mysql, "begin");
+  // all below cases implicitly start a txn with the 1st DML when there is no active txn in the session.
+  /* insert a row and commit the transaction */
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
   myquery(rc);
+
+  rc = mysql_commit(mysql);
+  myquery(rc);
+
   /* now insert the second row, and roll back the transaction */
   rc =
       mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(20, 'mysql')");
@@ -217,7 +224,20 @@ static void test_tran_bdb() {
   rc = mysql_rollback(mysql);
   myquery(rc);
 
-  rc = mysql_query(mysql, "begin");
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
+  myquery(rc);
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
+  myquery(rc);
+  rc = mysql_query(mysql, "begin"); // implicit commit
+  myquery(rc);
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
+  myquery(rc);
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
+  myquery(rc);
+  rc = mysql_autocommit(mysql, true); // implicit commit
+  myquery(rc);
+
+  rc = mysql_autocommit(mysql, false);
   myquery(rc);
   /* delete first row, and roll it back */
   rc = mysql_query(mysql, "DELETE FROM my_demo_transaction WHERE col1= 10");
@@ -226,8 +246,6 @@ static void test_tran_bdb() {
   rc = mysql_rollback(mysql);
   myquery(rc);
 
-  rc = mysql_query(mysql, "begin");
-  myquery(rc);
   /* test the results now, only one row should exist */
   rc = mysql_query(mysql, "SELECT * FROM my_demo_transaction");
   myquery(rc);
@@ -247,14 +265,18 @@ static void test_tran_bdb() {
   result = mysql_use_result(mysql);
   mytest(result);
 
-  row = mysql_fetch_row(result);
-  mytest(row);
+  int res_rows = 0;
+  while (true)
+  {
+    row = mysql_fetch_row(result);
+	if (!row) break;
+	res_rows++;
+  }
 
-  row = mysql_fetch_row(result);
-  mytest_r(row);
+  DIE_UNLESS(res_rows == 6);
 
   mysql_free_result(result);
-  rc = mysql_commit(mysql);
+  rc = mysql_commit(mysql);// this is crucial otherwise above select will pin a lot of undo logs in production systems.
   myquery(rc);
   mysql_autocommit(mysql, true);
 }
@@ -268,20 +290,20 @@ static void test_tran_innodb() {
 
   myheader("test_tran_innodb");
 
-  /* set AUTOCOMMIT to OFF */
-  rc = mysql_autocommit(mysql, false);
-  //myquery(rc);
-
   rc = mysql_query(mysql, "DROP TABLE IF EXISTS my_demo_transaction");
   myquery(rc);
 
   /* create the table 'mytran_demo' of type BDB' or 'InnoDB' */
   rc = mysql_query(mysql,
-                   "CREATE TABLE my_demo_transaction(col1 int, "
-                   "col2 varchar(30)) ");
+                   "CREATE TABLE my_demo_transaction( "
+                   "col1 int , col2 varchar(30)) ");
   myquery(rc);
 
-  rc = mysql_query(mysql, "begin");
+  /* set AUTOCOMMIT to OFF */
+  rc = mysql_autocommit(mysql, false);
+  myquery(rc);
+
+  rc = mysql_query(mysql, "START TRANSACTION");
   myquery(rc);
   /* insert a row and commit the transaction */
   rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
@@ -290,8 +312,14 @@ static void test_tran_innodb() {
   rc = mysql_commit(mysql);
   myquery(rc);
 
-  rc = mysql_query(mysql, "begin");
+  // all below cases implicitly start a txn with the 1st DML when there is no active txn in the session.
+  /* insert a row and commit the transaction */
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
   myquery(rc);
+
+  rc = mysql_commit(mysql);
+  myquery(rc);
+
   /* now insert the second row, and roll back the transaction */
   rc =
       mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(20, 'mysql')");
@@ -300,7 +328,20 @@ static void test_tran_innodb() {
   rc = mysql_rollback(mysql);
   myquery(rc);
 
-  rc = mysql_query(mysql, "begin");
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
+  myquery(rc);
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
+  myquery(rc);
+  rc = mysql_query(mysql, "begin"); // implicit commit
+  myquery(rc);
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
+  myquery(rc);
+  rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
+  myquery(rc);
+  rc = mysql_autocommit(mysql, true); // implicit commit
+  myquery(rc);
+
+  rc = mysql_autocommit(mysql, false);
   myquery(rc);
   /* delete first row, and roll it back */
   rc = mysql_query(mysql, "DELETE FROM my_demo_transaction WHERE col1= 10");
@@ -308,19 +349,6 @@ static void test_tran_innodb() {
 
   rc = mysql_rollback(mysql);
   myquery(rc);
-
-  rc = mysql_query(mysql, "begin");
-  myquery(rc);
-  /* test the results now, only one row should exist */
-  rc = mysql_query(mysql, "SELECT * FROM my_demo_transaction");
-  myquery(rc);
-
-  /* get the result */
-  result = mysql_store_result(mysql);
-  mytest(result);
-
-  (void)my_process_result_set(result);
-  mysql_free_result(result);
 
   /* test the results now, only one row should exist */
   rc = mysql_query(mysql, "SELECT * FROM my_demo_transaction");
@@ -330,11 +358,15 @@ static void test_tran_innodb() {
   result = mysql_use_result(mysql);
   mytest(result);
 
-  row = mysql_fetch_row(result);
-  mytest(row);
+  int res_rows = 0;
+  while (true)
+  {
+    row = mysql_fetch_row(result);
+	if (!row) break;
+	res_rows++;
+  }
 
-  row = mysql_fetch_row(result);
-  mytest_r(row);
+  DIE_UNLESS(res_rows == 6);
 
   mysql_free_result(result);
   rc = mysql_commit(mysql);
@@ -2177,31 +2209,34 @@ session_id  char(9) NOT NULL, \
     c      int NOT NULL, \
     d  datetime NOT NULL)");
   myquery(rc);
+
+// the origonal query was wrong! We have verified with our common sense and mysql doc and mysql-8.0.26 that even mysql itself doesn't support a datetime value like 2003-09-30 without quotes!
+// the datetime/timestamp strings must be quoted! however mysql does support using an integer like 20030930  to represent '2003-09-30', but this is insane!
   rc = mysql_query(mysql,
                    "INSERT INTO test_select VALUES "
-                   "(\"abc\", 1, 2, 3, 2003-08-30), "
-                   "(\"abd\", 1, 2, 3, 2003-08-30), "
-                   "(\"abf\", 1, 2, 3, 2003-08-30), "
-                   "(\"abg\", 1, 2, 3, 2003-08-30), "
-                   "(\"abh\", 1, 2, 3, 2003-08-30), "
-                   "(\"abj\", 1, 2, 3, 2003-08-30), "
-                   "(\"abk\", 1, 2, 3, 2003-08-30), "
-                   "(\"abl\", 1, 2, 3, 2003-08-30), "
-                   "(\"abq\", 1, 2, 3, 2003-08-30) ");
+                   "(\"abc\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abd\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abf\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abg\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abh\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abj\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abk\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abl\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abq\", 1, 2, 3, '2003-08-30') ");
   myquery(rc);
   rc = mysql_query(mysql,
                    "INSERT INTO test_select VALUES "
-                   "(\"abw\", 1, 2, 3, 2003-08-30), "
-                   "(\"abe\", 1, 2, 3, 2003-08-30), "
-                   "(\"abr\", 1, 2, 3, 2003-08-30), "
-                   "(\"abt\", 1, 2, 3, 2003-08-30), "
-                   "(\"aby\", 1, 2, 3, 2003-08-30), "
-                   "(\"abu\", 1, 2, 3, 2003-08-30), "
-                   "(\"abi\", 1, 2, 3, 2003-08-30), "
-                   "(\"abo\", 1, 2, 3, 2003-08-30), "
-                   "(\"abp\", 1, 2, 3, 2003-08-30), "
-                   "(\"abz\", 1, 2, 3, 2003-08-30), "
-                   "(\"abx\", 1, 2, 3, 2003-08-30)");
+                   "(\"abw\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abe\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abr\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abt\", 1, 2, 3, '2003-08-30'), "
+                   "(\"aby\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abu\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abi\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abo\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abp\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abz\", 1, 2, 3, '2003-08-30'), "
+                   "(\"abx\", 1, 2, 3, '2003-08-30')");
   myquery(rc);
 
   my_stpcpy(query,
@@ -2290,7 +2325,7 @@ static void test_bug1180() {
   myquery(rc);
 
   my_stpcpy(query,
-            "SELECT * FROM test_select WHERE ?= \"1111\" and "
+            "SELECT * FROM test_select WHERE ? = \"1111\" and "
             "session_id= \"abc\"");
   stmt = mysql_simple_prepare(mysql, query);
   check_stmt(stmt);
@@ -8186,7 +8221,7 @@ static void test_sqlmode() {
   rc = mysql_query(mysql, query);
   myquery(rc);
 
-  my_stpcpy(query, "INSERT INTO test_piping VALUES(?||?)");
+  my_stpcpy(query, "INSERT INTO test_piping VALUES(? || ?)");
   if (!opt_silent) fprintf(stdout, "\n  query: %s", query);
   stmt = mysql_simple_prepare(mysql, query);
   check_stmt(stmt);
@@ -8234,7 +8269,7 @@ static void test_sqlmode() {
   rc = mysql_query(mysql, query);
   myquery(rc);
 
-  my_stpcpy(query, "INSERT INTO test_piping VALUES(?||?)");
+  my_stpcpy(query, "INSERT INTO test_piping VALUES(? || ?)");
   if (!opt_silent) fprintf(stdout, "\n  query: %s", query);
   stmt = mysql_simple_prepare(mysql, query);
   check_stmt(stmt);
@@ -17313,9 +17348,6 @@ static void test_wl4284_1() {
   DBUG_TRACE;
   myheader("test_wl4284_1");
 
-  /* set AUTOCOMMIT to OFF */
-  rc = mysql_autocommit(mysql, false);
-  myquery(rc);
 
   rc = mysql_query(mysql, "DROP TABLE IF EXISTS trans");
   myquery(rc);
@@ -17323,6 +17355,9 @@ static void test_wl4284_1() {
   rc = mysql_query(mysql, "CREATE TABLE trans (a INT) ");
   myquery(rc);
 
+  /* set AUTOCOMMIT to OFF */
+  rc = mysql_autocommit(mysql, false);
+  myquery(rc);
   rc = mysql_query(mysql, "INSERT INTO trans VALUES(1)");
   myquery(rc);
 
@@ -22633,6 +22668,52 @@ static void test_bug32847269() {
 }
 #endif // TEST_MYSQL_PRIVATE_UNSUPPORTED
 
+
+static void test_mysql_private_operators()
+{
+  myheader("test_mysql_private_operators");
+  const char* queries[] = {
+	"select false && false, false and false",
+	"select true && false, true and false",
+	"select true && true, true and true",
+	"select true||false, true or false",
+	"select true||true, true or true",
+	"select false||false, false or false",
+	"select 2^1, 2#1", // 3. # is not an operator in mysql so we allow # in mysql connections as bitwise XOR just the same as postgresql.
+	"select 2^2, 2#2", // 0
+	"select 2^3, 2#3",//1
+	"select !true, not true",
+	"select !false, not false",
+	"select !null, not null",
+  };
+
+  MYSQL_ROW row;
+  MYSQL_RES *result;
+  for (uint i = 0; i < sizeof(queries)/sizeof(queries[0]); i++)
+  {
+    int rc = mysql_query(mysql, queries[i]);
+    myquery(rc);
+    result = mysql_store_result(mysql);
+    mytest(result);
+
+    rc = my_process_result_set(result);
+    DIE_UNLESS(rc == 1);
+
+    mysql_data_seek(result, 0);
+
+    row = mysql_fetch_row(result);
+    mytest(row);
+	if (i < 11)
+    	DIE_UNLESS(strcmp(row[0], row[1]) == 0);
+	else
+		DIE_UNLESS(row[0] == NULL && row[1] == NULL);
+    row = mysql_fetch_row(result);
+    mytest_r(row);
+    mysql_free_result(result);
+  }
+}
+
+
 /*
   test cases are commented out because mysql features not supported by kunlun-server
 
@@ -22962,6 +23043,7 @@ static struct my_tests_st my_tests[] = {
 #endif
 	{"test_select_db", test_select_db},
 	{"test_unknown_coltypes", test_unknown_coltypes},
+	{"test_mysql_private_operators", test_mysql_private_operators},
     {nullptr, nullptr}};
 
 // all test cases for bugs and wls which are disabled above by
