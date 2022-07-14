@@ -1905,7 +1905,6 @@ static void test_fetch_null() {
 }
 
 /* Test simple select */
-#ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
 static void test_select_version() {
   MYSQL_STMT *stmt;
   int rc;
@@ -1924,6 +1923,7 @@ static void test_select_version() {
   mysql_stmt_close(stmt);
 }
 
+#ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
 /* Test simple show */
 
 static void test_select_show_table() {
@@ -5730,6 +5730,7 @@ static void test_subselect() {
   conversion using MYSQL_TIME structure
 */
 
+#ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
 static void bind_date_conv(uint row_count, bool preserveFractions) {
   MYSQL_STMT *stmt = nullptr;
   uint rc, i, count = row_count;
@@ -5871,7 +5872,6 @@ static void bind_date_conv(uint row_count, bool preserveFractions) {
 
 /* Test DATE, TIME, DATETIME and TS with MYSQL_TIME conversion */
 
-#ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
 static void test_date() {
   int rc;
 
@@ -5890,7 +5890,6 @@ static void test_date() {
 
   bind_date_conv(5, false);
 }
-#endif
 
 /* Test DATE, TIME(6), DATETIME(6) and TS(6) with MYSQL_TIME conversion */
 
@@ -5921,7 +5920,6 @@ static void test_date_frac() {
   bind_date_conv(5, true);
 }
 
-#ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
 /* Test all time types to DATE and DATE to all types */
 
 static void test_date_date() {
@@ -6002,7 +6000,6 @@ static void test_date_dt() {
 
   bind_date_conv(2, false);
 }
-#endif
 
 /*
   Test TIME/DATETIME parameters to cover the following methods:
@@ -6068,7 +6065,7 @@ static void test_temporal_param() {
   my_bind2[2].buffer = (void *)&dec;
 
   /* Prepare and bind input and output parameters */
-  stmt = mysql_simple_prepare(mysql, "SELECT CAST(? AS SIGNED), ?+0e0, ?+0.0");
+  stmt = mysql_simple_prepare(mysql, "SELECT CAST(? AS INT), ? + 0e0, ? + 0.0");
   check_stmt(stmt);
   verify_param_count(stmt, N_PARAMS);
 
@@ -6113,7 +6110,7 @@ static void test_temporal_param() {
       MYSQL_TYPE_TIME;
 
   /* Prepare and bind intput and output parameters */
-  stmt = mysql_simple_prepare(mysql, "SELECT CAST(? AS SIGNED), ?+0e0, ?+0.0");
+  stmt = mysql_simple_prepare(mysql, "SELECT CAST(? AS INT), ?+0e0, ?+0.0");
   check_stmt(stmt);
   verify_param_count(stmt, N_PARAMS);
 
@@ -6151,6 +6148,7 @@ static void test_temporal_param() {
 
   mysql_stmt_close(stmt);
 }
+#endif
 
 /* Misc tests to keep pure coverage happy */
 
@@ -12885,7 +12883,7 @@ static void test_bug8722() {
   rc = mysql_stmt_prepare(stmt, stmt_text, (ulong)strlen(stmt_text));
   check_execute(stmt, rc);
   mysql_stmt_close(stmt);
-  stmt_text = "drop table if exists t1, v1";
+  stmt_text = "drop table if exists t1 cascade";
   rc = mysql_real_query(mysql, stmt_text, (ulong)strlen(stmt_text));
   myquery(rc);
 }
@@ -12945,7 +12943,7 @@ static void test_bug9159() {
 
   mysql_stmt_execute(stmt);
   mysql_stmt_close(stmt);
-  rc = mysql_query(mysql, "drop table if exists t1");
+  rc = mysql_query(mysql, "drop table if exists t1 cascade");
   myquery(rc);
 }
 
@@ -13733,8 +13731,7 @@ static void test_bug9735() {
   rc = mysql_query(mysql, "drop table if exists t1");
   myquery(rc);
   rc = mysql_query(mysql,
-                   "create table t1 (a text, b text) "
-                   "character set latin1");
+                   "create table t1 (a text, b text)");
   myquery(rc);
   rc = mysql_query(mysql, "select * from t1");
   myquery(rc);
@@ -14114,7 +14111,7 @@ static void test_bug11901() {
       "  midinit varchar(20) not null, lastname varchar(20) not null,"
       "  workdept varchar(6) not null, salary double not null,"
       "  bonus float not null, primary key (empno), "
-      " unique key (workdept, empno))";
+      " unique (workdept, empno))";
   rc = mysql_real_query(mysql, stmt_text, (ulong)strlen(stmt_text));
   myquery(rc);
 
@@ -15281,7 +15278,8 @@ static void test_bug22028117() {
   MYSQL_STMT *stmt;
 
   myheader("test_bug22028117");
-
+  rc = mysql_query(mysql, "create schema test");
+  myquery(rc);
   rc = mysql_query(mysql, "USE test");
   myquery(rc);
   rc = mysql_query(mysql, "DROP TABLE IF EXISTS t1");
@@ -15511,7 +15509,7 @@ static void test_status() {
 */
 static void test_bug21726() {
   const char *create_table[] = {
-      "DROP TABLE IF EXISTS t1",
+      "DROP TABLE IF EXISTS t1 cascade",
       "CREATE TABLE t1 (i INT)",
       "INSERT INTO t1 VALUES (1)",
   };
@@ -15648,7 +15646,7 @@ static void test_bug21635() {
   query_end = strxmov(query_end - 2, " FROM t1 GROUP BY i", NullS);
   DIE_UNLESS(query_end - query < MAX_TEST_QUERY_LENGTH);
 
-  rc = mysql_query(mysql, "DROP TABLE IF EXISTS t1");
+  rc = mysql_query(mysql, "DROP TABLE IF EXISTS t1 cascade");
   myquery(rc);
   rc = mysql_query(mysql, "CREATE TABLE t1 (i INT)");
   myquery(rc);
@@ -17448,7 +17446,7 @@ static void test_bug40365(void) {
 
   DBUG_TRACE;
 
-  rc = mysql_query(mysql, "DROP TABLE IF EXISTS t1");
+  rc = mysql_query(mysql, "DROP TABLE IF EXISTS t1 cascade");
   myquery(rc);
   rc = mysql_query(mysql,
                    "CREATE TABLE t1(c1 DATETIME, \
@@ -19558,6 +19556,10 @@ static void test_bug19894382() {
   int rc;
 
   myheader("test_bug19894382");
+    rc = mysql_query(mysql, "create schema client_test_db;");
+  myquery(rc);
+    rc = mysql_query(mysql, "use client_test_db;");
+  myquery(rc);
 
   rc = mysql_query(mysql, "DROP TABLE IF EXISTS client_test_db.bug19894382;");
   myquery(rc);
@@ -22745,7 +22747,7 @@ static struct my_tests_st my_tests[] = {
     {"test_select_direct", test_select_direct},
     {"test_select_prepare", test_select_prepare},
     {"test_select", test_select},
-    //{"test_select_version", test_select_version},
+    {"test_select_version", test_select_version},
     {"test_ps_conj_query_block", test_ps_conj_query_block},
     //{"test_select_show_table", test_select_show_table},
     //{"test_func_fields", test_func_fields},
@@ -22787,15 +22789,17 @@ static struct my_tests_st my_tests[] = {
     {"test_store_result1", test_store_result1},
     {"test_store_result2", test_store_result2},
     {"test_subselect", test_subselect},
-    //{"test_date", test_date}, UNIX_TIMESTAMP
+    /*need UNIX_TIMESTAMP
+	{"test_date", test_date},
     {"test_date_frac", test_date_frac},
-    {"test_temporal_param", test_temporal_param},
-	// below 4 need UNIX_TIMESTAMP
-   // {"test_date_date", test_date_date},
-   // {"test_date_time", test_date_time},
-   // {"test_date_ts", test_date_ts},
-   // {"test_date_dt", test_date_dt},
-
+	*/
+    // {"test_temporal_param", test_temporal_param}, the current way to convert a timestamp value to numerical type in mysql is absurd and useless.
+	/* need UNIX_TIMESTAMP
+    {"test_date_date", test_date_date},
+    {"test_date_time", test_date_time},
+    {"test_date_ts", test_date_ts},
+    {"test_date_dt", test_date_dt},
+	*/
 
     // {"test_prepare_alter", test_prepare_alter}, when ticket #746 is done, this can be enabled.
     {"test_manual_sample", test_manual_sample},
@@ -22841,7 +22845,7 @@ static struct my_tests_st my_tests[] = {
     {"test_selecttmp", test_selecttmp},
     //{"test_create_drop", test_create_drop}, dependent on ticket #746
     //{"test_rename", test_rename}, this grammar not supported, and this test case is trivial anyway
-    //{"test_do_set", test_do_set},
+    //{"test_do_set", test_do_set}, user defined variables not supported
     //{"test_multi", test_multi},  multi-table update/delete grammar not supported for now
     {"test_insert_select", test_insert_select},
     {"test_bind_nagative", test_bind_nagative},
