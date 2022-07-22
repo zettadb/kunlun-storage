@@ -292,6 +292,8 @@ static void test_tran_innodb() {
 
   rc = mysql_query(mysql, "DROP TABLE IF EXISTS my_demo_transaction");
   myquery(rc);
+  rc = mysql_query(mysql, "DROP TABLE IF EXISTS my_useless_tbl");
+  myquery(rc);
 
   /* create the table 'mytran_demo' of type BDB' or 'InnoDB' */
   rc = mysql_query(mysql,
@@ -330,11 +332,18 @@ static void test_tran_innodb() {
 
   rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
   myquery(rc);
+  rc = mysql_query(mysql, "create table my_useless_tbl(a int)");
+  myquery(rc);
+  rc = mysql_query(mysql, "set timestamp = default");// this stmt doesn't start an txn
+  myquery(rc);
+
   rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
   myquery(rc);
   rc = mysql_query(mysql, "begin"); // implicit commit
   myquery(rc);
   rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
+  myquery(rc);
+  rc = mysql_query(mysql, "drop table my_useless_tbl");// implicit commit
   myquery(rc);
   rc = mysql_query(mysql, "INSERT INTO my_demo_transaction VALUES(10, 'venu')");
   myquery(rc);
@@ -4637,6 +4646,130 @@ static void test_stmt_close() {
   mysql_free_result(result);
 }
 
+static void query_check_num_rows(MYSQL *conn, const char *qstr, int expected_num)
+{
+  int rc;
+  MYSQL_RES *result;
+
+  rc = mysql_query(conn, qstr);
+  myquery(rc);
+  result = mysql_store_result(conn);
+  mytest(result);
+  rc = my_process_result_set(result);
+  DIE_UNLESS(rc == expected_num);
+  mysql_free_result(result);
+}
+
+static void test_implicit_start_txn() {
+  MYSQL *lmysql;
+  MYSQL_STMT *stmt_x;
+  MYSQL_BIND my_bind[1];
+  unsigned int count;
+  int rc;
+  char query[MAX_TEST_QUERY_LENGTH];
+
+  myheader("test_implicit_start_txn");
+
+  if (!opt_silent) fprintf(stdout, "\n Establishing a test connection ...");
+  if (!(lmysql = mysql_client_init(nullptr))) {
+    myerror("mysql_client_init() failed");
+    exit(1);
+  }
+  if (!(mysql_real_connect(lmysql, opt_host, opt_user, opt_password, current_db,
+                           opt_port, opt_unix_socket, 0))) {
+    myerror("connection failed");
+    exit(1);
+  }
+  lmysql->reconnect = true;
+  if (!opt_silent) fprintf(stdout, "OK");
+
+  /* set AUTOCOMMIT to off */
+  rc = mysql_autocommit(lmysql, false);
+  myquery(rc);
+  rc = mysql_autocommit(mysql, false);
+  myquery(rc);
+
+  rc = mysql_query(lmysql, "DROP TABLE IF EXISTS test_implicit_start_txn");
+  myquery(rc);
+
+  rc = mysql_query(lmysql, "CREATE TABLE test_implicit_start_txn(id int)");
+  myquery(rc);
+
+  my_stpcpy(query, "INSERT INTO test_implicit_start_txn(id) VALUES(?)");
+  stmt_x = mysql_simple_prepare(mysql, query);
+  check_stmt(stmt_x);
+
+  verify_param_count(stmt_x, 1);
+
+  /*
+    We need to memset bind structure because mysql_stmt_bind_param checks all
+    its members.
+  */
+  memset(my_bind, 0, sizeof(my_bind));
+
+  my_bind[0].buffer = (void *)&count;
+  my_bind[0].buffer_type = MYSQL_TYPE_LONG;
+  count = 100;
+
+  rc = mysql_stmt_bind_param(stmt_x, my_bind);
+  check_execute(stmt_x, rc);
+
+  rc = mysql_query(mysql, "set session lock_wait_timeout=10"); // this doesn't start a txn
+  myquery(rc);
+
+  rc = mysql_stmt_execute(stmt_x); // implicit txn start
+  check_execute(stmt_x, rc);
+
+  verify_st_affected_rows(stmt_x, 1);
+
+  // the row can be seen in this explicit txn ET
+  query_check_num_rows(mysql, "SELECT id FROM test_implicit_start_txn", 1);
+
+  rc = mysql_query(lmysql, "set default_transaction_isolation = 'repeatable read'");
+  myquery(rc);
+  // but the row can't be seen in other sessions because the txn ET is still active
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 0);// ET1 started
+
+  rc = mysql_query(mysql, "drop table if exists useless_tbl"); // txn ET implicitly committed
+  myquery(rc);
+  rc = mysql_query(mysql, "create table useless_tbl(a int)"); // a ddl is an independent txn
+  myquery(rc);
+
+  // isolation level is RR, need to commit the txn ET1 to see the row
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 0);
+
+
+  rc = mysql_query(lmysql, "drop table if exists useless_tbl"); // txn ET1 implicitly committed
+  myquery(rc);
+
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 1);
+
+  rc = mysql_stmt_execute(stmt_x); // implicit txn start ET2
+  check_execute(stmt_x, rc);
+
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 1); // new row not seen since ET2 not committed
+
+  rc = mysql_query(mysql, "begin");// implicitly commit ET2
+  myquery(rc);
+
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 1); // new row not seen in ET1 since ET1.snapshot taken before ET2 committed
+
+  rc = mysql_query(lmysql, "begin");// implicitly commit ET1
+  myquery(rc);
+
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 2); // new row seen in ET1
+
+  // implicit commit happens even if DDL not actually performed
+  rc = mysql_query(lmysql, "drop table if exists useless_tbl"); // txn ET1 implicitly committed
+  myquery(rc);
+  rc = mysql_query(mysql, "drop table if exists useless_tbl"); // txn ET implicitly committed
+  myquery(rc);
+  rc = mysql_stmt_close(stmt_x);
+  if (!opt_silent) fprintf(stdout, "\n mysql_close_stmt(x) returned: %d", rc);
+  DIE_UNLESS(rc == 0);
+
+  mysql_close(lmysql);
+}
 /* Test simple set variable prepare */
 
 #ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
@@ -5730,7 +5863,6 @@ static void test_subselect() {
   conversion using MYSQL_TIME structure
 */
 
-#ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
 static void bind_date_conv(uint row_count, bool preserveFractions) {
   MYSQL_STMT *stmt = nullptr;
   uint rc, i, count = row_count;
@@ -5742,7 +5874,12 @@ static void bind_date_conv(uint row_count, bool preserveFractions) {
   uint year, month, day, hour, minute, sec;
   uint now_year = 1990, now_month = 3, now_day = 13;
 
-  rc = mysql_query(mysql, "SET timestamp=UNIX_TIMESTAMP('1990-03-13')");
+  //rc = mysql_query(mysql, "SET timestamp=637257600");// UNIX_TIMESTAMP('1990-03-13')");
+  //myquery(rc);
+  
+  memset(tm, 0, sizeof(tm));
+
+  rc = mysql_query(mysql, "SET enable_sql_log=true");
   myquery(rc);
 
   stmt =
@@ -5782,6 +5919,9 @@ static void bind_date_conv(uint row_count, bool preserveFractions) {
 
   rc = mysql_stmt_bind_param(stmt, my_bind);
   check_execute(stmt, rc);
+
+  rc = mysql_query(mysql, "SET autocommit=off;");
+  myquery(rc);
 
   for (count = 0; count < row_count; count++) {
     for (i = 0; i < (uint)array_elements(my_bind); i++) {
@@ -5864,6 +6004,8 @@ static void bind_date_conv(uint row_count, bool preserveFractions) {
   DIE_UNLESS(rc == MYSQL_NO_DATA);
 
   mysql_stmt_close(stmt);
+  rc = mysql_commit(mysql);
+  myquery(rc);
 
   /* set the timestamp back to default */
   rc = mysql_query(mysql, "SET timestamp=DEFAULT");
@@ -5921,7 +6063,7 @@ static void test_date_frac() {
 }
 
 /* Test all time types to DATE and DATE to all types */
-
+#ifdef UNSUPPORTED_MYSQL_CONV
 static void test_date_date() {
   int rc;
 
@@ -6148,7 +6290,7 @@ static void test_temporal_param() {
 
   mysql_stmt_close(stmt);
 }
-#endif
+#endif // UNSUPPORTED_MYSQL_CONV
 
 /* Misc tests to keep pure coverage happy */
 
@@ -8578,7 +8720,6 @@ static void test_bug1946() {
   rc = mysql_query(mysql, "DROP TABLE prepare_command");
 }
 
-#ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
 static void test_parse_error_and_bad_length() {
   MYSQL_STMT *stmt;
   int rc;
@@ -8607,7 +8748,6 @@ static void test_parse_error_and_bad_length() {
     fprintf(stdout, "Got error (as expected): '%s'\n", mysql_stmt_error(stmt));
   mysql_stmt_close(stmt);
 }
-#endif
 
 static void test_bug2247() {
   MYSQL_STMT *stmt;
@@ -22749,12 +22889,12 @@ static struct my_tests_st my_tests[] = {
     {"test_select", test_select},
     {"test_select_version", test_select_version},
     {"test_ps_conj_query_block", test_ps_conj_query_block},
-    //{"test_select_show_table", test_select_show_table},
-    //{"test_func_fields", test_func_fields},
+    //{"test_select_show_table", test_select_show_table}, // SHOW COLUMNS/SHOW KEYS
+    //{"test_func_fields", test_func_fields}, // DATE_FORMAT
     {"test_long_data", test_long_data},
     {"test_insert", test_insert},
-    //{"test_set_variable", test_set_variable},
-    //{"test_select_show", test_select_show},
+    //{"test_set_variable", test_set_variable}, // prepare SET var stmt unsupported.
+    //{"test_select_show", test_select_show},// SHOW COLUMNS/SHOW KEYS
     {"test_prepare_noparam", test_prepare_noparam},
     {"test_time_zone", test_time_zone},
     {"test_bind_result", test_bind_result},
@@ -22789,23 +22929,29 @@ static struct my_tests_st my_tests[] = {
     {"test_store_result1", test_store_result1},
     {"test_store_result2", test_store_result2},
     {"test_subselect", test_subselect},
-    /*need UNIX_TIMESTAMP
 	{"test_date", test_date},
     {"test_date_frac", test_date_frac},
+#ifdef UNSUPPORTED_MYSQL_CONV
+	// MySQL's way to convert a timestamp value to numerical type is absurd and useless.
+    {"test_temporal_param", test_temporal_param},
+	/*
+	Mysql's way to convert between any combination of DATE, TIME, TIMESTAMP,
+	DATETIME (except between a  TIMESTAMP and a DATETIME value) values is
+	useless and unreasonable, and seldom if ever used. We don't support it.
 	*/
-    // {"test_temporal_param", test_temporal_param}, the current way to convert a timestamp value to numerical type in mysql is absurd and useless.
-	/* need UNIX_TIMESTAMP
+
     {"test_date_date", test_date_date},
     {"test_date_time", test_date_time},
     {"test_date_ts", test_date_ts},
     {"test_date_dt", test_date_dt},
-	*/
-
+#endif
     // {"test_prepare_alter", test_prepare_alter}, when ticket #746 is done, this can be enabled.
     {"test_manual_sample", test_manual_sample},
     {"test_pure_coverage", test_pure_coverage},
     {"test_buffers", test_buffers},
-	// kunlun-server is inherently more strict to values than mysql, the test data is out of bound of its column type and won't be accepted.
+
+	// kunlun-server is inherently more strict to values than mysql,
+	// the test data in below 3 cases is out of bound of its column type and won't be accepted.
     //{"test_ushort_bug", test_ushort_bug},
     //{"test_sshort_bug", test_sshort_bug},
     //{"test_stiny_bug", test_stiny_bug},
@@ -22824,7 +22970,7 @@ static struct my_tests_st my_tests[] = {
     // {"test_list_fields", test_list_fields}, COM_FIELD_LIST is deprecated and we don't support it
     {"test_free_result", test_free_result},
     {"test_free_store_result", test_free_store_result},
-    //{"test_sqlmode", test_sqlmode},
+    //{"test_sqlmode", test_sqlmode}, // non-default sql mode behavior not supported
     {"test_ts", test_ts},
 #ifdef ENABLE_BUG_TESTS
     {"test_bug1115", test_bug1115},
@@ -22833,9 +22979,9 @@ static struct my_tests_st my_tests[] = {
     {"test_bug1644", test_bug1644},
     {"test_bug1946", test_bug1946},
     {"test_bug2248", test_bug2248},
-    //{"test_parse_error_and_bad_length", test_parse_error_and_bad_length},
     {"test_bug2247", test_bug2247},
 #endif
+    {"test_parse_error_and_bad_length", test_parse_error_and_bad_length},
     {"test_subqueries", test_subqueries},
     {"test_bad_union", test_bad_union},
     {"test_distinct", test_distinct},
@@ -23048,6 +23194,7 @@ static struct my_tests_st my_tests[] = {
 	{"test_select_db", test_select_db},
 	{"test_unknown_coltypes", test_unknown_coltypes},
 	{"test_mysql_private_operators", test_mysql_private_operators},
+	{"test_implicit_start_txn", test_implicit_start_txn},
     {nullptr, nullptr}};
 
 // all test cases for bugs and wls which are disabled above by
@@ -23059,7 +23206,6 @@ static struct my_tests_st my_bug_wl_tests[] = {
     {"test_bug1644", test_bug1644},
     {"test_bug1946", test_bug1946},
     {"test_bug2248", test_bug2248},
-    //{"test_parse_error_and_bad_length", test_parse_error_and_bad_length},
     {"test_bug2247", test_bug2247},
     {"test_bug3117", test_bug3117},
     {"test_bug3035", test_bug3035},
