@@ -55,6 +55,7 @@
 
 //static void mct_log(const char *format, ...)
 //    MY_ATTRIBUTE((format(printf, 1, 2)));
+static void prep_exec_ddl(MYSQL *lmysql, const char *stmt);
 
 /* Query processing */
 
@@ -4759,18 +4760,57 @@ static void test_implicit_start_txn() {
 
   query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 2); // new row seen in ET1
 
+  rc = mysql_stmt_execute(stmt_x);
+  check_execute(stmt_x, rc);
+
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 2); // new row not seen in ET2
+
+  rc = mysql_query(mysql, "truncate table useless_tbl"); // txn ET1 implicitly committed
+  myquery_r(rc);
+  rc = mysql_query(lmysql, "truncate table useless_tbl"); // txn ET2 implicitly committed
+  myquery_r(rc);
+
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 3); // new txn ET4 implicitly started, new row seen in ET4
+
+  rc = mysql_stmt_execute(stmt_x); // implicitly start ET3
+  check_execute(stmt_x, rc);
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 3); // new row not seen in ET4
+  rc = mysql_stmt_execute(stmt_x);
+  check_execute(stmt_x, rc);
+
   // implicit commit happens even if DDL not actually performed
-  rc = mysql_query(lmysql, "drop table if exists useless_tbl"); // txn ET1 implicitly committed
+  prep_exec_ddl(lmysql, "drop table if exists useless_tbl");// txn ET4 implicitly committed
+
+  rc = mysql_autocommit(lmysql, true);
   myquery(rc);
-  rc = mysql_query(mysql, "drop table if exists useless_tbl"); // txn ET implicitly committed
-  myquery(rc);
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 3); // new row not seen in lmysql
+
+  prep_exec_ddl(mysql, "drop table if exists useless_tbl");  // txn ET3 implicitly committed
+
   rc = mysql_stmt_close(stmt_x);
   if (!opt_silent) fprintf(stdout, "\n mysql_close_stmt(x) returned: %d", rc);
   DIE_UNLESS(rc == 0);
 
+  query_check_num_rows(lmysql, "SELECT id FROM test_implicit_start_txn", 5); // new row seen in lmysql
   mysql_close(lmysql);
 }
 /* Test simple set variable prepare */
+
+static void prep_exec_ddl(MYSQL *lmysql, const char *stmt)
+{
+  MYSQL_STMT *stmt_y;
+  int rc;
+  char query[MAX_TEST_QUERY_LENGTH];
+
+  /* exec DDL via prepared stmt */
+  my_stpcpy(query, stmt);
+  stmt_y = mysql_simple_prepare(lmysql, query);
+  check_stmt(stmt_y);
+  rc = mysql_stmt_execute(stmt_y);
+  myquery(rc);
+  rc = mysql_stmt_close(stmt_y);
+  DIE_UNLESS(rc == 0);
+}
 
 #ifdef TEST_MYSQL_PRIVATE_UNSUPPORTED
 static void test_set_variable() {
